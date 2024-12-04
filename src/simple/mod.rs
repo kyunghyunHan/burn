@@ -61,10 +61,11 @@ impl DiabetesDataset {
             .unwrap()
             .parent()
             .unwrap()
-            .join("../dataset/test.csv");
-
+            .join("../dataset/test.csv"); 
+        
         // Build dataset from csv with tab ('\t') delimiter
         let dataset = InMemDataset::from_csv(path, &ReaderBuilder::new()).unwrap();
+   
         let dataset = Self { dataset };
         Ok(dataset)
     }
@@ -72,7 +73,7 @@ impl DiabetesDataset {
 // 배치 구조체
 #[derive(Clone, Debug)]
 struct SimpleBatch<B: Backend> {
-    values: Tensor<B, 1>,
+    values: Tensor<B, 2>,
     targets: Tensor<B, 1, Int>,
 }
 
@@ -93,7 +94,7 @@ impl<B: Backend> Batcher<SimpleDataset, SimpleBatch<B>> for SimpleBatcher<B> {
     fn batch(&self, items: Vec<SimpleDataset>) -> SimpleBatch<B> {
         let values = items
             .iter()
-            .map(|item| Tensor::<B, 1>::from_floats([(item.data)], &self.device))
+            .map(|item| Tensor::<B, 2>::from_floats([(item.data)], &self.device))
             .collect();
         let targets = items
             .iter()
@@ -148,10 +149,10 @@ impl<B: Backend> SimpleModel<B> {
     //     }
     // }
 
-    pub fn forward(&self, images: Tensor<B, 1>) -> Tensor<B, 2> {
-        let [batch_size] = images.dims();
-        let xs: Tensor<B, 2> = images.reshape([batch_size, 1]);
-        let xs = self.linear1.forward(xs);
+    pub fn forward(&self, images: Tensor<B, 2>) -> Tensor<B, 2> {
+        // let [batch_size] = images.dims();
+        // let xs: Tensor<B, 2> = images.reshape([batch_size, 1]);
+        let xs = self.linear1.forward(images);
         let xs = relu(xs);
         let xs = self.linear2.forward(xs);
         let xs = relu(xs);
@@ -159,7 +160,7 @@ impl<B: Backend> SimpleModel<B> {
     }
     fn forward_classification(
         &self,
-        x: Tensor<B, 1>,
+        x: Tensor<B, 2>,
         targets: Tensor<B, 1, Int>,
     ) -> ClassificationOutput<B> {
         let output = self.forward(x);
