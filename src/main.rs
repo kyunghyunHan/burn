@@ -1,5 +1,5 @@
 mod mnist;
-
+mod simple;
 fn main() {
-    mnist::run();
+    simple::run();
 }

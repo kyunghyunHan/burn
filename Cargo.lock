@@ -292,6 +292,8 @@ name = "burn"
 version = "0.1.0"
 dependencies = [
  "burn 0.15.0",
+ "csv",
+ "serde",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ use burn::nn::loss::CrossEntropyLossConfig;
 use burn::nn::pool::AdaptiveAvgPool2d;
 use burn::nn::pool::AdaptiveAvgPool2dConfig;
 use burn::nn::Dropout;
+use burn::data::dataloader::Dataset;
 use burn::nn::DropoutConfig;
 use burn::nn::Linear;
 use burn::nn::LinearConfig;
@@ -24,6 +25,7 @@ use burn::train::ClassificationOutput;
 use burn::train::TrainOutput;
 use burn::train::TrainStep;
 use burn::train::ValidStep;
+use burn::record::Recorder;
 use burn::{
     config::Config,
     data::{dataloader::DataLoaderBuilder, dataset::vision::MnistDataset},
@@ -96,9 +98,6 @@ impl<B: Backend> Batcher<MnistItem, MnistBatch<B>> for MnistBatcher<B> {
             .map(|item| TensorData::from(item.image).convert::<B::FloatElem>())
             .map(|data| Tensor::<B, 2>::from_data(data, &self.device))
             .map(|tensor| tensor.reshape([1, 28, 28]))
-            // Normalize: make between [0,1] and make the mean=0 and std=1
-            // values mean=0.1307,std=0.3081 are from the PyTorch MNIST example
-            // https://github.com/pytorch/examples/blob/54f4572509891883a947411fd7239237dd2a39c3/mnist/main.py#L122
             .map(|tensor| ((tensor / 255) - 0.1307) / 0.3081)
             .collect();
 
@@ -256,16 +255,39 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 }
+pub fn infer<B: Backend>(artifact_dir: &str, device: B::Device, item: MnistItem) {
+    let config = TrainingConfig::load(format!("{artifact_dir}/config.json"))
+        .expect("Config should exist for the model");
+    let record = CompactRecorder::new()
+        .load(format!("{artifact_dir}/model").into(), &device)
+        .expect("Trained model should exist");
 
+    let model = config.model.init::<B>(&device).load_record(record);
+
+    let label = item.label;
+    let batcher = MnistBatcher::new(device);
+    let batch = batcher.batch(vec![item]);
+    let output = model.forward(batch.images);
+    let predicted = output.argmax(1).flatten::<1>(0, 1).into_scalar();
+
+    println!("Predicted {} Expected {}", predicted, label);
+}
 pub fn run() {
     type MyBackend = Wgpu<f32, i32>;
     type MyAutodiffBackend = Autodiff<MyBackend>;
 
     let device = burn::backend::wgpu::WgpuDevice::default();
     let artifact_dir = "./models/mnist";
-    train::<MyAutodiffBackend>(
+    // train::<MyAutodiffBackend>(
+    //     artifact_dir,
+    //     TrainingConfig::new(ModelConfig::new(10, 512), AdamConfig::new()),
+    //     device.clone(),
+    // );
+    infer::<MyBackend>(
         artifact_dir,
-        TrainingConfig::new(ModelConfig::new(10, 512), AdamConfig::new()),
-        device.clone(),
+        device,
+        burn::data::dataset::vision::MnistDataset::test()
+            .get(42)
+            .unwrap(),
     );
 }
