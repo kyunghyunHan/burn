@@ -8,6 +8,7 @@ use burn::nn::pool::AdaptiveAvgPool2dConfig;
 use burn::nn::Dropout;
 use burn::nn::DropoutConfig;
 use burn::nn::Relu;
+use burn::optim::SgdConfig;
 use burn::nn::{Linear, LinearConfig};
 use burn::optim::AdamConfig;
 use burn::prelude::Config;
@@ -30,7 +31,8 @@ use std::path::Path;
 // 간단한 데이터셋 구조체
 #[derive(Clone, Debug, Deserialize)]
 struct SimpleDataset {
-    data: [i64; 2],
+    data: i64,
+    data2: i64,
     labels: i64,
 }
 pub struct DiabetesDataset {
@@ -61,11 +63,11 @@ impl DiabetesDataset {
             .unwrap()
             .parent()
             .unwrap()
-            .join("../dataset/test.csv"); 
-        
+            .join("../dataset/test.csv");
+
         // Build dataset from csv with tab ('\t') delimiter
         let dataset = InMemDataset::from_csv(path, &ReaderBuilder::new()).unwrap();
-   
+
         let dataset = Self { dataset };
         Ok(dataset)
     }
@@ -94,11 +96,14 @@ impl<B: Backend> Batcher<SimpleDataset, SimpleBatch<B>> for SimpleBatcher<B> {
     fn batch(&self, items: Vec<SimpleDataset>) -> SimpleBatch<B> {
         let values = items
             .iter()
-            .map(|item| Tensor::<B, 2>::from_floats([(item.data)], &self.device))
+            .map(|item| {
+                let data = [item.data as f32, item.data2 as f32];
+                Tensor::<B, 2>::from_floats([data], &self.device)
+            })
             .collect();
         let targets = items
             .iter()
-            .map(|item| Tensor::<B, 1, Int>::from_ints([(item.labels)], &self.device))
+            .map(|item| Tensor::<B, 1, Int>::from_ints([item.labels], &self.device))
             .collect();
 
         let values = Tensor::cat(values, 0).to_device(&self.device);
@@ -112,20 +117,25 @@ impl ModelConfig {
     /// Returns the initialized model.
     pub fn init<B: Backend>(&self, device: &B::Device) -> SimpleModel<B> {
         SimpleModel {
-            //커널 크기 3사용
-            //채널 1에서 8로 확장
-            // conv1: Conv2dConfig::new([1, 8], [3, 3]).init(),
-            // //8에서 16으로 확장
-            // conv2: Conv2dConfig::new([8, 16], [3, 3]).init(),
-            //적응형 평균 폴링 모듈을 사용 이미지의 차원을 8x8으로 축소
-            // pool: AdaptiveAvgPool2dConfig::new([8, 8]).init(),
-            // activation: ReLU::new(),
-            linear1: LinearConfig::new(2, 4).init(device),
-            linear2: LinearConfig::new(4, 2).init(device),
-            linear3: LinearConfig::new(2, 2).init(device),
-            // dropout: DropoutConfig::new(self.dropout).init(),
-            // activation: Relu::new(),
+            linear1: LinearConfig::new(2, 4).init(device),    // VOTE_DIM(2) -> LAYER1_OUT_SIZE(4)
+            linear2: LinearConfig::new(4, 2).init(device),    // LAYER1_OUT_SIZE(4) -> LAYER2_OUT_SIZE(2)
+            linear3: LinearConfig::new(2, 2).init(device),    // LAYER2_OUT_SIZE(2) -> RESULTS+1(2)
         }
+        // SimpleModel {
+        //     //커널 크기 3사용
+        //     //채널 1에서 8로 확장
+        //     // conv1: Conv2dConfig::new([1, 8], [3, 3]).init(),
+        //     // //8에서 16으로 확장
+        //     // conv2: Conv2dConfig::new([8, 16], [3, 3]).init(),
+        //     //적응형 평균 폴링 모듈을 사용 이미지의 차원을 8x8으로 축소
+        //     // pool: AdaptiveAvgPool2dConfig::new([8, 8]).init(),
+        //     // activation: ReLU::new(),
+        //     linear1: LinearConfig::new(2, 4).init(device),
+        //     linear2: LinearConfig::new(4, 2).init(device),
+        //     linear3: LinearConfig::new(2, 2).init(device),
+        //     // dropout: DropoutConfig::new(self.dropout).init(),
+        //     // activation: Relu::new(),
+        // }
     }
 }
 #[derive(burn::module::Module, Debug)]
@@ -133,7 +143,7 @@ pub struct SimpleModel<B: Backend> {
     // dropout: Dropout,
     linear1: Linear<B>,
     linear2: Linear<B>, // 출력이 2개가 되도록 수정 필요
-    linear3: Linear<B>, // 출력이 2개가 되도록 수정 필요
+    linear3: Linear<B>, // 출력이 2개가 되도록 수정 필요q
 
                         // activation: Relu,
 }
@@ -175,16 +185,16 @@ impl<B: Backend> SimpleModel<B> {
 #[derive(Config)]
 pub struct TrainingConfig {
     pub model: ModelConfig,
-    pub optimizer: AdamConfig,
-    #[config(default = 10)]
+    pub optimizer: SgdConfig,
+    #[config(default = 20)] // EPOCHS = 20 와 동일
     pub num_epochs: usize,
-    #[config(default = 64)]
+    #[config(default = 8)] // 데이터셋이 작으므로 배치 크기를 작게 설정
     pub batch_size: usize,
-    #[config(default = 4)]
+    #[config(default = 1)] // 작은 데이터셋이므로 worker 수도 줄임
     pub num_workers: usize,
-    #[config(default = 42)]
+    #[config(default = 42)] // 재현성을 위한 시드값 유지
     pub seed: u64,
-    #[config(default = 1.0e-4)]
+    #[config(default = 0.05)] // LEARNING_RATE = 0.05 와 동일
     pub learning_rate: f64,
 }
 
@@ -265,17 +275,18 @@ pub fn run() {
     let device = burn::backend::wgpu::WgpuDevice::default();
     train::<MyAutodiffBackend>(
         "./models/simple",
-        TrainingConfig::new(ModelConfig::new(10, 1), AdamConfig::new()),
+        TrainingConfig::new(ModelConfig::new(2, 4), SgdConfig::new()),
         device.clone(),
     );
-    // infer::<MyBackend>(
-    //     "./models/simple",
-    //     device,
-    //     SimpleDataset {
-    //         data: [13, 9],
-    //         labels: 0,
-    //     },
-    // );
+    infer::<MyBackend>(
+        "./models/simple",
+        device,
+        SimpleDataset {
+            data: 6,
+            data2: 14,
+            labels: 0,
+        },
+    );
     // 여기서 실제 학습 로직을 구현할 수 있습니다
     println!("Model created successfully!");
 }

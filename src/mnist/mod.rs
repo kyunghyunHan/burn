@@ -98,6 +98,7 @@ impl<B: Backend> Batcher<MnistItem, MnistBatch<B>> for MnistBatcher<B> {
             .map(|item| TensorData::from(item.image).convert::<B::FloatElem>())
             .map(|data| Tensor::<B, 2>::from_data(data, &self.device))
             .map(|tensor| tensor.reshape([1, 28, 28]))
+
             .map(|tensor| ((tensor / 255) - 0.1307) / 0.3081)
             .collect();
 
