@@ -63,6 +63,22 @@ impl DiabetesDataset {
             .unwrap()
             .parent()
             .unwrap()
+            .join("../dataset/train.csv");
+
+        // Build dataset from csv with tab ('\t') delimiter
+        let dataset = InMemDataset::from_csv(path, &ReaderBuilder::new()).unwrap();
+
+        let dataset = Self { dataset };
+        Ok(dataset)
+    }
+
+    pub fn new2() -> Result<Self, std::io::Error> {
+        // Download dataset csv file
+        let path = Path::new(file!())
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
             .join("../dataset/test.csv");
 
         // Build dataset from csv with tab ('\t') delimiter
