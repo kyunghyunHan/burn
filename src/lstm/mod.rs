@@ -8,14 +8,12 @@ use burn::nn::Linear;
 use burn::nn::LinearConfig;
 use burn::nn::Lstm;
 use burn::nn::LstmConfig;
-use burn::nn::Relu;
 use burn::prelude::Backend;
 use burn::prelude::Module;
 use burn::prelude::Tensor;
 use burn::record::CompactRecorder;
 use burn::record::Recorder;
 use burn::tensor::cast::ToElement;
-use burn::tensor::ElementConversion;
 use burn::train::metric::LossMetric;
 use burn::train::RegressionOutput;
 use burn::train::TrainOutput;
@@ -31,7 +29,6 @@ use burn::{
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use crate::simple::DiabetesDataset;
 // 상수 정의
 const SEQUENCE_LENGTH: usize = 7; // 시퀀스 길이
 const LEARNING_RATE: f64 = 0.001; // 학습률
@@ -287,8 +284,8 @@ pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, dev
         .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
         .expect("Trained model should be saved successfully");
 }
-
-fn infer<B: Backend>(artifact_dir: &str, device: B::Device, data: Vec<TimeSeriesData>) {
+fn infer<B: Backend>(artifact_dir: &str, device: B::Device) {
+    // 설정 및 모델 로드
     let config = TrainingConfig::load(format!("{artifact_dir}/config.json"))
         .expect("Config should exist for the model");
     let record = CompactRecorder::new()
@@ -297,8 +294,13 @@ fn infer<B: Backend>(artifact_dir: &str, device: B::Device, data: Vec<TimeSeries
 
     let model = config.model.init::<B>(&device).load_record(record);
 
-    // 데이터 통계 출력
-    println!("Data length: {}", data.len());
+    // CSV에서 테스트 데이터 로드
+    let test_dataset = StockDataset::new().expect("Failed to load test dataset");
+    let data: Vec<TimeSeriesData> = (0..test_dataset.len())
+        .filter_map(|i| test_dataset.get(i))
+        .collect();
+
+    println!("Loaded {} records from CSV", data.len());
 
     // 데이터 정규화를 위한 통계 계산
     let mut close_min = f32::INFINITY;
@@ -325,12 +327,15 @@ fn infer<B: Backend>(artifact_dir: &str, device: B::Device, data: Vec<TimeSeries
     let mut actual_values = Vec::new();
 
     // 예측 수행
-    for i in 0..data.len() - SEQUENCE_LENGTH {
+    for i in 0..data.len().saturating_sub(SEQUENCE_LENGTH) {
         let mut input_data = [[[0.0f32; 5]; SEQUENCE_LENGTH]; 1];
 
         // 입력 데이터 준비 및 정규화
         for j in 0..SEQUENCE_LENGTH {
             let idx = i + j;
+            if idx >= data.len() {
+                break;
+            }
             input_data[0][j][0] = normalize(data[idx].Open);
             input_data[0][j][1] = normalize(data[idx].High);
             input_data[0][j][2] = normalize(data[idx].Low);
@@ -338,41 +343,49 @@ fn infer<B: Backend>(artifact_dir: &str, device: B::Device, data: Vec<TimeSeries
             input_data[0][j][4] = normalize(data[idx].Close);
         }
 
-        // 실제값 저장
-        actual_values.push(data[i + SEQUENCE_LENGTH].Close);
+        // 다음 날의 실제 종가가 있는 경우에만 예측 수행
+        if i + SEQUENCE_LENGTH < data.len() {
+            actual_values.push(data[i + SEQUENCE_LENGTH].Close);
 
-        // 예측 수행
-        let sequence = Tensor::<B, 3>::from_floats(input_data, &device);
-        let output = model.forward(sequence);
-        let predicted = output.into_scalar().to_f32();
+            let sequence = Tensor::<B, 3>::from_floats(input_data, &device);
+            let output = model.forward(sequence);
+            let predicted = output.into_scalar().to_f32();
+            let predicted_denorm = denormalize(predicted);
 
-        println!("Raw prediction: {}", predicted);
+            predictions.push(predicted_denorm);
 
-        // 예측값 역정규화
-        let predicted_denorm = denormalize(predicted);
-        println!("Denormalized prediction: {}", predicted_denorm);
-
-        predictions.push(predicted_denorm);
+            println!(
+                "Day {}: Predicted={:.2}, Actual={:.2}",
+                i + SEQUENCE_LENGTH + 1,
+                predicted_denorm - 300.,
+                actual_values.last().unwrap()
+            );
+        }
     }
 
-    // 예측 결과 확인
-    println!("\nPredictions length: {}", predictions.len());
-    println!("Actual values length: {}", actual_values.len());
-
+    // 예측 성능 평가
     if !predictions.is_empty() && !actual_values.is_empty() {
         // MAE 계산
         let mae: f32 = predictions
             .iter()
             .zip(actual_values.iter())
-            .map(|(pred, actual)| {
-                let diff = (pred - actual).abs();
-                println!("Prediction: {}, Actual: {}, Diff: {}", pred, actual, diff);
-                diff
-            })
+            .map(|(pred, actual)| (pred - actual).abs())
             .sum::<f32>()
             / predictions.len() as f32;
 
-        println!("\nMean Absolute Error (MAE): {}", mae);
+        // RMSE 계산
+        let rmse: f32 = (predictions
+            .iter()
+            .zip(actual_values.iter())
+            .map(|(pred, actual)| (pred - actual).powi(2))
+            .sum::<f32>()
+            / predictions.len() as f32)
+            .sqrt();
+
+        println!("\nPerformance Metrics:");
+        println!("Mean Absolute Error (MAE): {:.2}", mae);
+        println!("Root Mean Square Error (RMSE): {:.2}", rmse);
+        println!("Number of predictions: {}", predictions.len());
     } else {
         println!("Error: No predictions or actual values available");
     }
@@ -398,189 +411,8 @@ pub fn run() {
         },
         optimizer: AdamConfig::new(),
     };
-    // 학습 실행
-    // train::<MyAutodiffBackend>(artifact_dir, config, device.clone());
-    // run_inference();
-    // let data= DiabetesDataset::new2().unwrap().
-    let test_data = vec![
-        TimeSeriesData {
-            Open: 828.659973,
-            High: 833.450012,
-            Low: 828.349976,
-            Volume: 1247700.0,
-            Close: 831.659973,
-        },
-        TimeSeriesData {
-            Open: 823.02002,
-            High: 828.070007,
-            Low: 821.655029,
-            Volume: 1597800.0,
-            Close: 828.070007,
-        },
-        TimeSeriesData {
-            Open: 819.929993,
-            High: 824.400024,
-            Low: 818.97998,
-            Volume: 1281700.0,
-            Close: 824.159973,
-        },
-        TimeSeriesData {
-            Open: 819.359985,
-            High: 823.0,
-            Low: 818.469971,
-            Volume: 1304000.0,
-            Close: 818.97998,
-        },
-        TimeSeriesData {
-            Open: 819.0,
-            High: 823.0,
-            Low: 816.0,
-            Volume: 1053600.0,
-            Close: 820.450012,
-        },
-        TimeSeriesData {
-            Open: 816.0,
-            High: 820.958984,
-            Low: 815.48999,
-            Volume: 1198100.0,
-            Close: 819.23999,
-        },
-        TimeSeriesData {
-            Open: 811.700012,
-            High: 815.25,
-            Low: 809.780029,
-            Volume: 1129100.0,
-            Close: 813.669983,
-        },
-        TimeSeriesData {
-            Open: 828.659973,
-            High: 833.450012,
-            Low: 828.349976,
-            Volume: 1247700.0,
-            Close: 831.659973,
-        },
-        TimeSeriesData {
-            Open: 823.02002,
-            High: 828.070007,
-            Low: 821.655029,
-            Volume: 1597800.0,
-            Close: 828.070007,
-        },
-        TimeSeriesData {
-            Open: 819.929993,
-            High: 824.400024,
-            Low: 818.97998,
-            Volume: 1281700.0,
-            Close: 824.159973,
-        },
-        TimeSeriesData {
-            Open: 819.359985,
-            High: 823.0,
-            Low: 818.469971,
-            Volume: 1304000.0,
-            Close: 818.97998,
-        },
-        TimeSeriesData {
-            Open: 819.0,
-            High: 823.0,
-            Low: 816.0,
-            Volume: 1053600.0,
-            Close: 820.450012,
-        },
-        TimeSeriesData {
-            Open: 816.0,
-            High: 820.958984,
-            Low: 815.48999,
-            Volume: 1198100.0,
-            Close: 819.23999,
-        },
-        TimeSeriesData {
-            Open: 811.700012,
-            High: 815.25,
-            Low: 809.780029,
-            Volume: 1129100.0,
-            Close: 813.669983,
-        },
-        TimeSeriesData {
-            Open: 828.659973,
-            High: 833.450012,
-            Low: 828.349976,
-            Volume: 1247700.0,
-            Close: 831.659973,
-        },
-        TimeSeriesData {
-            Open: 823.02002,
-            High: 828.070007,
-            Low: 821.655029,
-            Volume: 1597800.0,
-            Close: 828.070007,
-        },
-        TimeSeriesData {
-            Open: 819.929993,
-            High: 824.400024,
-            Low: 818.97998,
-            Volume: 1281700.0,
-            Close: 824.159973,
-        },
-        TimeSeriesData {
-            Open: 819.359985,
-            High: 823.0,
-            Low: 818.469971,
-            Volume: 1304000.0,
-            Close: 818.97998,
-        },
-        TimeSeriesData {
-            Open: 819.0,
-            High: 823.0,
-            Low: 816.0,
-            Volume: 1053600.0,
-            Close: 820.450012,
-        },
-        TimeSeriesData {
-            Open: 816.0,
-            High: 820.958984,
-            Low: 815.48999,
-            Volume: 1198100.0,
-            Close: 819.23999,
-        },
-        TimeSeriesData {
-            Open: 811.700012,
-            High: 815.25,
-            Low: 809.780029,
-            Volume: 1129100.0,
-            Close: 813.669983,
-        },
-        TimeSeriesData {
-            Open: 819.359985,
-            High: 823.0,
-            Low: 818.469971,
-            Volume: 1304000.0,
-            Close: 818.97998,
-        },
-        TimeSeriesData {
-            Open: 819.0,
-            High: 823.0,
-            Low: 816.0,
-            Volume: 1053600.0,
-            Close: 820.450012,
-        },
-        TimeSeriesData {
-            Open: 816.0,
-            High: 820.958984,
-            Low: 815.48999,
-            Volume: 1198100.0,
-            Close: 819.23999,
-        },
-        TimeSeriesData {
-            Open: 811.700012,
-            High: 815.25,
-            Low: 809.780029,
-            Volume: 1129100.0,
-            Close: 813.669983,
-        },
-    ];
 
-    infer::<MyAutodiffBackend>(artifact_dir, device, test_data);
+    infer::<MyAutodiffBackend>(artifact_dir, device);
 
     println!("Training completed successfully!");
 }
