@@ -1,5 +1,7 @@
 mod mnist;
 mod simple;
+mod lstm;
+// mod transformer;
 fn main() {
-    simple::run();
+    lstm::run();
 }
