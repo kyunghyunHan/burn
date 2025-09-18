@@ -1,418 +1,281 @@
-use burn::backend::{wgpu::WgpuDevice, Autodiff, Wgpu};
-use burn::data::dataloader::batcher::Batcher;
-use burn::data::dataloader::Dataset;
-use burn::data::dataset::InMemDataset;
-use burn::nn::loss::MseLoss;
-use burn::nn::loss::Reduction;
-use burn::nn::Linear;
-use burn::nn::LinearConfig;
-use burn::nn::Lstm;
-use burn::nn::LstmConfig;
-use burn::prelude::Backend;
-use burn::prelude::Module;
-use burn::prelude::Tensor;
-use burn::record::CompactRecorder;
-use burn::record::Recorder;
-use burn::tensor::cast::ToElement;
-use burn::train::metric::LossMetric;
-use burn::train::RegressionOutput;
-use burn::train::TrainOutput;
-use burn::train::TrainStep;
-use burn::train::ValidStep;
-use burn::{
-    config::Config, data::dataloader::DataLoaderBuilder, optim::AdamConfig,
-    tensor::backend::AutodiffBackend, train::LearnerBuilder,
+use burn::backend::autodiff;
+use burn::backend::autodiff::Autodiff;
+use burn::backend::wgpu::{Wgpu, WgpuDevice};
+use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
+use burn::nn::{
+    loss::{MseLoss, Reduction},
+    Linear, LinearConfig, Lstm, LstmConfig,
 };
-
-/*LSTM */
-//7일의 정보를 활용하므로 Sequence 7 output = 1
-use serde::{Deserialize, Serialize};
+use burn::optim::AdamConfig;
+use burn::prelude::*;
+use burn::record::{CompactRecorder, Recorder};
+use burn::tensor::backend::AutodiffBackend;
+use burn::tensor::Tensor;
+use burn::train::{
+    metric::LossMetric, LearnerBuilder, RegressionOutput, TrainOutput, TrainStep, ValidStep,
+};
+use serde::Deserialize;
 use std::path::Path;
-
-// 상수 정의
-const SEQUENCE_LENGTH: usize = 7; // 시퀀스 길이
-const LEARNING_RATE: f64 = 0.001; // 학습률
-const BATCH_SIZE: usize = 100;
-const HIDDEN_STATE: usize = 10;
+// 하이퍼파라미터
+const INPUT_DIM: usize = 5;
+const HIDDEN_DIM: usize = 16;
 const OUTPUT_DIM: usize = 1;
-const HIDDEN_DIM: usize = 10; // 은닉층 차원
-const INPUT_DIM: usize = 5; // 입력 차원 (특성 수)
-const NUM_LAYERS: usize = 1; // LSTM 층 수
-const NUM_EPOCHS: usize = 100;
+const SEQ_LEN: usize = 7;
+const BATCH: usize = 64;
+const EPOCHS: usize = 10;
+const LEARNING_RATE: f64 = 1e-3;
 
-// 데이터 구조체
+// CSV 한 줄
 #[derive(Clone, Debug, Deserialize)]
-struct TimeSeriesData {
-    Open: f32, // i64에서 f32로 변경
+struct StockRow {
+    Open: f32,
     High: f32,
     Low: f32,
-    Volume: f32, // i32에서 f32로 변경
+    Volume: f32,
     Close: f32,
 }
-// 배치 구조체
+
+// DataLoader가 반환할 배치
 #[derive(Clone, Debug)]
-struct TimeSeriesBatch<B: Backend> {
-    sequence: Tensor<B, 3>, // [batch_size, sequence_length, features]
-    targets: Tensor<B, 2>,  // [batch_size, 1]
+struct StockBatch<B: Backend> {
+    x: Tensor<B, 3>, // [batch, seq, features]
+    y: Tensor<B, 2>, // [batch, 1]
 }
 
-// 데이터셋 구조체
-pub struct StockDataset {
-    dataset: InMemDataset<TimeSeriesData>,
-}
-
-impl Dataset<TimeSeriesData> for StockDataset {
-    fn get(&self, index: usize) -> Option<TimeSeriesData> {
-        self.dataset.get(index)
-    }
-
-    fn len(&self) -> usize {
-        self.dataset.len()
-    }
+// CSV 전체를 메모리에 올림
+#[derive(Clone)]
+struct StockDataset {
+    rows: Vec<StockRow>,
 }
 
 impl StockDataset {
-    pub fn new() -> Result<Self, std::io::Error> {
-        let path = Path::new(file!())
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("../dataset/test.csv");
-
-        let dataset = InMemDataset::from_csv(
-            path,
-            &csv::ReaderBuilder::new()
-                .has_headers(true)
-                .delimiter(b',')
-                .flexible(true),
-        )
-        .unwrap();
-
-        Ok(Self { dataset })
+    fn load_csv(path: &str) -> Self {
+        let mut rdr = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_path(path)
+            .unwrap();
+        let rows: Vec<StockRow> = rdr.deserialize().map(|r| r.unwrap()).collect();
+        Self { rows }
+    }
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+    fn get(&self, idx: usize) -> Option<StockRow> {
+        self.rows.get(idx).cloned()
     }
 }
 
-// 배처 구현
-#[derive(Clone)]
-struct TimeSeriesBatcher<B: Backend> {
+// Batcher<B,I,O>
+struct StockBatcher<B: Backend> {
     device: B::Device,
-    sequence_length: usize,
 }
 
-impl<B: Backend> TimeSeriesBatcher<B> {
-    fn new(device: B::Device, sequence_length: usize) -> Self {
-        Self {
-            device,
-            sequence_length,
-        }
+impl<B: Backend> StockBatcher<B> {
+    fn new(device: B::Device) -> Self {
+        Self { device }
     }
 }
 
-impl<B: Backend> Batcher<TimeSeriesData, TimeSeriesBatch<B>> for TimeSeriesBatcher<B> {
-    fn batch(&self, items: Vec<TimeSeriesData>) -> TimeSeriesBatch<B> {
-        let mut sequences = Vec::new();
-        let mut targets = Vec::new();
+impl<B: Backend> Batcher<B, StockRow, StockBatch<B>> for StockBatcher<B> {
+    fn batch(&self, items: Vec<StockRow>, device: &B::Device) -> StockBatch<B> {
+        let mut seqs = Vec::new();
+        let mut targs = Vec::new();
 
-        for window in items.windows(self.sequence_length + 1) {
-            // 5개의 특성을 가진 시퀀스 배열 생성 (Open, High, Low, Volume, Close)
-            let mut seq_array = [[0.0f32; 5]; SEQUENCE_LENGTH];
-
-            for (i, item) in window[..self.sequence_length].iter().enumerate() {
-                seq_array[i][0] = item.Open as f32; // i64를 f32로 변환
-                seq_array[i][1] = item.High;
-                seq_array[i][2] = item.Low;
-                seq_array[i][3] = item.Volume as f32; // i32를 f32로 변환
-                seq_array[i][4] = item.Close;
+        // SEQ_LEN + 1 길이의 윈도우에서 마지막 값을 예측
+        for window in items.windows(SEQ_LEN + 1) {
+            let mut seq_array = [[0.0f32; INPUT_DIM]; SEQ_LEN];
+            for (i, row) in window[..SEQ_LEN].iter().enumerate() {
+                seq_array[i] = [row.Open, row.High, row.Low, row.Volume, row.Close];
             }
 
-            sequences.push(Tensor::<B, 2>::from_floats(seq_array, &self.device));
-
-            // 다음 날의 종가(Close)를 타겟으로 사용
-            targets.push(Tensor::<B, 2>::from_floats(
-                [[window[self.sequence_length].Close]],
-                &self.device,
+            seqs.push(Tensor::<B, 2>::from_floats(seq_array, device));
+            targs.push(Tensor::<B, 2>::from_floats(
+                [[window[SEQ_LEN].Close]],
+                device,
             ));
         }
 
-        let sequence =
-            Tensor::cat(sequences.clone(), 0).reshape([sequences.len(), self.sequence_length, 5]); // 특성 수를 5로 변경
-        let targets = Tensor::cat(targets, 0);
+        let x = Tensor::cat(seqs, 0).reshape([items.len() - SEQ_LEN, SEQ_LEN, INPUT_DIM]);
+        let y = Tensor::cat(targs, 0);
 
-        TimeSeriesBatch { sequence, targets }
+        StockBatch { x, y }
     }
 }
-// 모델 설정
+
+// LSTM 모델
 #[derive(Module, Debug)]
-pub struct LstmModel2<B: Backend> {
+struct LstmNet<B: Backend> {
     lstm: Lstm<B>,
-    linear: Linear<B>,
-    // relu: Relu,
+    fc: Linear<B>,
 }
 
-impl<B: Backend> LstmModel2<B> {
-    pub fn new(device: &B::Device) -> Self {
+impl<B: Backend> LstmNet<B> {
+    fn new(dev: &B::Device) -> Self {
         Self {
-            // 입력 차원, 은닉층 차원, bias 설정
-            lstm: LstmConfig::new(INPUT_DIM, HIDDEN_DIM, true).init(device),
-            // 은닉층 차원에서 출력 차원으로
-            linear: LinearConfig::new(HIDDEN_DIM, OUTPUT_DIM).init(device),
-            // relu: Relu::new(),
+            lstm: LstmConfig::new(INPUT_DIM, HIDDEN_DIM, true).init(dev),
+            fc: LinearConfig::new(HIDDEN_DIM, OUTPUT_DIM).init(dev),
         }
     }
-    pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 2> {
-        let (output, _) = self.lstm.forward(x, None);
-
-        // 차원 정보 가져오기
-        let batch_size = output.dims()[0]; // 93
-        let seq_len = output.dims()[1]; // 7
-        let hidden_size = output.dims()[2]; // 10
-
-        // 마지막 시퀀스 선택하기 위해 모든 차원을 명시적으로 조작
-        let output = output.reshape([batch_size * seq_len, hidden_size]); // [93*7, 10]
-        let output = output.reshape([batch_size, seq_len, hidden_size]); // [93, 7, 10]
-        let last_seq = output.narrow(1, seq_len - 1, 1); // 마지막 시퀀스만 선택 [93, 1, 10]
-        let last_seq = last_seq.squeeze(1); // 중간 차원 제거 [93, 10]
-
-        // 선형 레이어 통과
-        let output = self.linear.forward(last_seq);
-
-        output
-    }
-    pub fn forward_regression(
-        &self,
-        x: Tensor<B, 3>,
-        targets: Tensor<B, 2>,
-    ) -> RegressionOutput<B> {
-        let output = self.forward(x);
-        let loss = MseLoss::new().forward(output.clone(), targets.clone(), Reduction::Mean);
-        RegressionOutput::new(loss, output, targets)
-    }
-}
-
-// 학습 스텝 구현
-
-impl<B: AutodiffBackend> TrainStep<TimeSeriesBatch<B>, RegressionOutput<B>> for LstmModel2<B> {
-    fn step(&self, batch: TimeSeriesBatch<B>) -> TrainOutput<RegressionOutput<B>> {
-        let item = self.forward_regression(batch.sequence, batch.targets);
-        TrainOutput::new(self, item.loss.backward(), item)
-    }
-}
-impl<B: Backend> ValidStep<TimeSeriesBatch<B>, RegressionOutput<B>> for LstmModel2<B> {
-    fn step(&self, batch: TimeSeriesBatch<B>) -> RegressionOutput<B> {
-        let output = self.forward(batch.sequence);
-        let loss = MseLoss::new().forward(
-            output.clone(),
-            batch.targets.clone(), // targets clone 추가
-            Reduction::Mean,
+    fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 2> {
+        let (out, _) = self.lstm.forward(x, None);
+        let indices = Tensor::<B, 1, Int>::from_ints(
+            [SEQ_LEN as i64 - 1],   // i64 배열
+            &out.device(),           // 디바이스
         );
-
-        RegressionOutput::new(loss, output, batch.targets)
+        
+        let last = out.select(1, indices).squeeze(1); // [batch, hidden]
+        self.fc.forward(last)
+    }
+    fn forward_reg(&self, x: Tensor<B, 3>, y: Tensor<B, 2>) -> RegressionOutput<B> {
+        let pred = self.forward(x);
+        let loss = MseLoss::new().forward(pred.clone(), y.clone(), Reduction::Mean);
+        RegressionOutput::new(loss, pred, y)
     }
 }
-#[derive(Debug, Clone, Deserialize, Serialize)]
 
-pub struct LstmConfig2 {
-    pub d_input: usize,
-    pub d_hidden: usize,
-    pub bias: bool,
-    // pub initializer: Initializer,
-}
-#[derive(Config)]
-pub struct TrainingConfig {
-    pub model: LstmConfig2,
-    pub optimizer: AdamConfig,
-    // #[config(default = 10)]
-    pub num_epochs: usize,
-    // #[config(default = 64)]
-    pub batch_size: usize,
-    // #[config(default = 4)]
-    pub num_workers: usize,
-    // #[config(default = 42)]
-    pub seed: u64,
-    // #[config(default = 0.001)]
-    pub learning_rate: f64,
-}
-impl LstmConfig2 {
-    pub fn init<B: Backend>(&self, device: &B::Device) -> LstmModel2<B> {
-        LstmModel2 {
-            lstm: LstmConfig::new(INPUT_DIM, HIDDEN_DIM, true).init(device), // 5 -> HIDDEN_DIM
-            linear: LinearConfig::new(HIDDEN_DIM, OUTPUT_DIM).init(device),  // HIDDEN_DIM -> 1
-        }
+// 학습/검증 step
+impl<B: AutodiffBackend> TrainStep<StockBatch<B>, RegressionOutput<B>> for LstmNet<B> {
+    fn step(&self, batch: StockBatch<B>) -> TrainOutput<RegressionOutput<B>> {
+        let out = self.forward_reg(batch.x, batch.y);
+        TrainOutput::new(self, out.loss.backward(), out)
     }
 }
-fn create_artifact_dir(artifact_dir: &str) {
-    // Remove existing artifacts before to get an accurate learner summary
-    std::fs::remove_dir_all(artifact_dir).ok();
-    std::fs::create_dir_all(artifact_dir).ok();
+impl<B: Backend> ValidStep<StockBatch<B>, RegressionOutput<B>> for LstmNet<B> {
+    fn step(&self, batch: StockBatch<B>) -> RegressionOutput<B> {
+        self.forward_reg(batch.x, batch.y)
+    }
 }
-pub fn train<B: AutodiffBackend>(artifact_dir: &str, config: TrainingConfig, device: B::Device) {
-    create_artifact_dir(artifact_dir);
-    config
-        .save(format!("{artifact_dir}/config.json"))
-        .expect("Config should be saved successfully");
-    B::seed(config.seed);
+use burn::tensor::Int;
 
-    let batcher_train = TimeSeriesBatcher::new(device.clone(), SEQUENCE_LENGTH);
-    let batcher_test = TimeSeriesBatcher::<B::InnerBackend>::new(device.clone(), SEQUENCE_LENGTH);
+pub fn example() {
+    type BackendF = burn::backend::wgpu::Wgpu<f32>;
+    type AD = autodiff::Autodiff<BackendF>;
+    let device = WgpuDevice::default();
 
-    let dataloader = DataLoaderBuilder::new(batcher_train)
-        .batch_size(config.batch_size)
-        .shuffle(config.seed)
+    // 데이터 로드
+    let dataset = StockDataset::load_csv("dataset/train.csv");
+
+    let batcher_train = StockBatcher::<AD>::new(device.clone());
+
+    type Inner = <AD as burn::tensor::backend::AutodiffBackend>::InnerBackend;
+
+    let batcher_valid = StockBatcher::<Inner>::new(device.clone());
+    // DataLoader
+    let loader = DataLoaderBuilder::<AD, StockRow, StockBatch<AD>>::new(batcher_train)
+        .batch_size(BATCH)
+        .shuffle(42)
         .num_workers(1)
-        .build(StockDataset::new().unwrap());
-    let dataloader_test = DataLoaderBuilder::new(batcher_test)
-        .batch_size(config.batch_size)
-        .shuffle(config.seed)
+        .build(dataset.clone());
+
+    let loader_valid = DataLoaderBuilder::<Inner, StockRow, StockBatch<Inner>>::new(batcher_valid)
+        .batch_size(BATCH)
+        .shuffle(42)
         .num_workers(1)
-        .build(StockDataset::new().unwrap());
+        .build(dataset);
 
-    // Explicitly specify the type for model
-    let model: LstmModel2<B> = LstmModel2::new(&device);
+    // 모델 & 옵티마이저
+    let model = LstmNet::new(&device);
+    let optim_cfg = AdamConfig::new(); // ⚡ Config만 생성
+    let optim = optim_cfg.init(); // ⚡ OptimizerAdaptor 로 변환
 
-    let learner = LearnerBuilder::new(artifact_dir)
+    // 학습
+    let learner = LearnerBuilder::new("./model")
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
         .devices(vec![device.clone()])
-        .num_epochs(config.num_epochs)
-        .summary()
-        .build(model, config.optimizer.init(), config.learning_rate);
+        .num_epochs(EPOCHS)
+        .build(model, optim, LEARNING_RATE);
 
-    let model_trained = learner.fit(dataloader, dataloader_test);
-    model_trained
-        .save_file(format!("{artifact_dir}/model"), &CompactRecorder::new())
-        .expect("Trained model should be saved successfully");
+    let trained = learner.fit(loader, loader_valid);
+
+    trained
+        .save_file("./model/final", &CompactRecorder::new())
+        .unwrap();
 }
-fn infer<B: Backend>(artifact_dir: &str, device: B::Device) {
-    // 설정 및 모델 로드
-    let config = TrainingConfig::load(format!("{artifact_dir}/config.json"))
-        .expect("Config should exist for the model");
-    let record = CompactRecorder::new()
-        .load(format!("{artifact_dir}/model").into(), &device)
-        .expect("Trained model should exist");
 
-    let model = config.model.init::<B>(&device).load_record(record);
+use burn::data::dataset::Dataset;
 
-    // CSV에서 테스트 데이터 로드
-    let test_dataset = StockDataset::new().expect("Failed to load test dataset");
-    let data: Vec<TimeSeriesData> = (0..test_dataset.len())
-        .filter_map(|i| test_dataset.get(i))
-        .collect();
-
-    println!("Loaded {} records from CSV", data.len());
-
-    // 데이터 정규화를 위한 통계 계산
-    let mut close_min = f32::INFINITY;
-    let mut close_max = f32::NEG_INFINITY;
-    for item in &data {
-        close_min = close_min.min(item.Close);
-        close_max = close_max.max(item.Close);
+impl Dataset<StockRow> for StockDataset {
+    fn get(&self, index: usize) -> Option<StockRow> {
+        self.rows.get(index).cloned()
     }
-    println!("Close price range: min={}, max={}", close_min, close_max);
-
-    // 정규화 함수
-    let normalize = |x: f32| -> f32 {
-        if close_max == close_min {
-            println!("Warning: max equals min in normalization");
-            return 0.0;
-        }
-        (x - close_min) / (close_max - close_min)
-    };
-
-    // 역정규화 함수
-    let denormalize = |x: f32| -> f32 { x * (close_max - close_min) + close_min };
-
-    let mut predictions = Vec::new();
-    let mut actual_values = Vec::new();
-
-    // 예측 수행
-    for i in 0..data.len().saturating_sub(SEQUENCE_LENGTH) {
-        let mut input_data = [[[0.0f32; 5]; SEQUENCE_LENGTH]; 1];
-
-        // 입력 데이터 준비 및 정규화
-        for j in 0..SEQUENCE_LENGTH {
-            let idx = i + j;
-            if idx >= data.len() {
-                break;
-            }
-            input_data[0][j][0] = normalize(data[idx].Open);
-            input_data[0][j][1] = normalize(data[idx].High);
-            input_data[0][j][2] = normalize(data[idx].Low);
-            input_data[0][j][3] = normalize(data[idx].Volume);
-            input_data[0][j][4] = normalize(data[idx].Close);
-        }
-
-        // 다음 날의 실제 종가가 있는 경우에만 예측 수행
-        if i + SEQUENCE_LENGTH < data.len() {
-            actual_values.push(data[i + SEQUENCE_LENGTH].Close);
-
-            let sequence = Tensor::<B, 3>::from_floats(input_data, &device);
-            let output = model.forward(sequence);
-            let predicted = output.into_scalar().to_f32();
-            let predicted_denorm = denormalize(predicted);
-
-            predictions.push(predicted_denorm);
-
-            println!(
-                "Day {}: Predicted={:.2}, Actual={:.2}",
-                i + SEQUENCE_LENGTH + 1,
-                predicted_denorm - 300.,
-                actual_values.last().unwrap()
-            );
-        }
-    }
-
-    // 예측 성능 평가
-    if !predictions.is_empty() && !actual_values.is_empty() {
-        // MAE 계산
-        let mae: f32 = predictions
-            .iter()
-            .zip(actual_values.iter())
-            .map(|(pred, actual)| (pred - actual).abs())
-            .sum::<f32>()
-            / predictions.len() as f32;
-
-        // RMSE 계산
-        let rmse: f32 = (predictions
-            .iter()
-            .zip(actual_values.iter())
-            .map(|(pred, actual)| (pred - actual).powi(2))
-            .sum::<f32>()
-            / predictions.len() as f32)
-            .sqrt();
-
-        println!("\nPerformance Metrics:");
-        println!("Mean Absolute Error (MAE): {:.2}", mae);
-        println!("Root Mean Square Error (RMSE): {:.2}", rmse);
-        println!("Number of predictions: {}", predictions.len());
-    } else {
-        println!("Error: No predictions or actual values available");
+    fn len(&self) -> usize {
+        self.rows.len()
     }
 }
 
-pub fn run() {
-    let artifact_dir = "./models/lstm";
 
-    type MyBackend = Wgpu<f32>;
-    type MyAutodiffBackend = Autodiff<MyBackend>;
-
+pub  fn infer_example() {
+    type BackendF = burn::backend::wgpu::Wgpu<f32>;
+    type B = burn::backend::autodiff::Autodiff<BackendF>;
     let device = WgpuDevice::default();
-    let config = TrainingConfig {
-        num_epochs: NUM_EPOCHS,
-        batch_size: BATCH_SIZE,
-        num_workers: 4,
-        seed: 42,
-        learning_rate: LEARNING_RATE,
-        model: LstmConfig2 {
-            d_input: INPUT_DIM,
-            d_hidden: HIDDEN_DIM,
-            bias: true,
-        },
-        optimizer: AdamConfig::new(),
-    };
 
-    infer::<MyAutodiffBackend>(artifact_dir, device);
+    // 모델 로드
+    let mut model = LstmNet::new(&device);
+    let record = CompactRecorder::new()
+        .load("./model/final".into(), &device)
+        .unwrap();
+    model = model.load_record(record);
 
-    println!("Training completed successfully!");
+    // 테스트 입력 (임의 데이터)
+    let input = [[[1.0f32,1.1,0.9,1000.0,1.05]; SEQ_LEN]; 1];
+    let x = Tensor::<B, 3>::from_floats(input, &device);
+
+    // 추론
+    let out = model.forward(x);
+    println!("예측 값: {:?}", out.to_data());
+}
+// use burn::tensor::Int;
+// use burn::record::CompactRecorder;
+use burn::tensor::backend::Backend;
+
+pub fn evaluate() {
+    type BackendF = burn::backend::wgpu::Wgpu<f32>;
+    type B = burn::backend::autodiff::Autodiff<BackendF>;
+    let device = WgpuDevice::default();
+
+    // 📂 모델 로드
+    let mut model = LstmNet::new(&device);
+    let record = CompactRecorder::new()
+        .load("./model/final".into(), &device)
+        .expect("모델 로드 실패");
+    model = model.load_record(record);
+
+    // 📂 테스트 데이터 로드
+    let test = StockDataset::load_csv("dataset/test.csv");
+    let mut predictions = Vec::new();
+    let mut targets     = Vec::new();
+
+    // 시퀀스 단위로 예측
+    for i in 0..test.len().saturating_sub(SEQ_LEN) {
+        let mut seq_array = [[0.0f32; INPUT_DIM]; SEQ_LEN];
+        for j in 0..SEQ_LEN {
+            let row = &test.rows[i + j];
+            seq_array[j] = [row.Open, row.High, row.Low, row.Volume, row.Close];
+        }
+        let x = Tensor::<B, 3>::from_floats([seq_array], &device);
+        let pred = model
+        .forward(x)
+        .into_data()
+        .to_vec::<f32>()
+        .unwrap()[0];  
+        predictions.push(pred);
+        targets.push(test.rows[i + SEQ_LEN].Close);
+    }
+
+    // 🎯 MAE / RMSE 계산
+    let n = predictions.len() as f32;
+    let mae: f32 = predictions.iter()
+        .zip(&targets)
+        .map(|(p, t)| (p - t).abs())
+        .sum::<f32>() / n;
+    let rmse: f32 = (predictions.iter()
+        .zip(&targets)
+        .map(|(p, t)| (p - t).powi(2))
+        .sum::<f32>() / n).sqrt();
+
+    println!("테스트 결과 ({} 샘플)", predictions.len());
+    println!("Mean Absolute Error (MAE): {:.4}", mae);
+    println!("Root Mean Square Error (RMSE): {:.4}", rmse);
 }
