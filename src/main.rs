@@ -5,5 +5,6 @@ mod lstm;
 fn main() {
     // lstm::example();
     // lstm::infer_example();
-    lstm::basic::evaluate();
+    // lstm::basic::evaluate();
+    lstm::basic::example();
 }
