@@ -6,5 +6,5 @@ fn main() {
     // lstm::example();
     // lstm::infer_example();
     // lstm::basic::evaluate();
-    lstm::basic::example();
+    lstm::basic2::test();
 }
