@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 burn = { version = "0.18.0", features = ["train", "wgpu", "vision","autodiff"] }
 csv = "1.4.0"
+rand = "0.9.2"
 serde = "1.0.228"
 [profile.release]
 opt-level = 3           # 최대 최적화

@@ -1,0 +1,59 @@
+2025-11-01T12:16:34.967738Z  INFO cubecl_wgpu::runtime: Using adapter AdapterInfo { name: "Apple M1", vendor: 0, device: 0, device_type: IntegratedGpu, driver: "", driver_info: "", backend: Metal }
+2025-11-01T12:16:34.987630Z  INFO cubecl_wgpu::runtime: Created wgpu compute server on device Device { inner: Core(CoreDevice { context: ContextWgpuCore { type: "Native" }, id: Id(0,1), error_sink: Mutex { data: ErrorSink }, features: Features { features_wgpu: FeaturesWGPU(SHADER_FLOAT32_ATOMIC | TEXTURE_FORMAT_16BIT_NORM | TEXTURE_COMPRESSION_ASTC_HDR | TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES | TIMESTAMP_QUERY_INSIDE_ENCODERS | TEXTURE_BINDING_ARRAY | SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING | STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING | PARTIALLY_BOUND_BINDING_ARRAY | MULTI_DRAW_INDIRECT | PUSH_CONSTANTS | ADDRESS_MODE_CLAMP_TO_ZERO | ADDRESS_MODE_CLAMP_TO_BORDER | POLYGON_MODE_LINE | VERTEX_WRITABLE_STORAGE | CLEAR_TEXTURE | MSL_SHADER_PASSTHROUGH | TEXTURE_ATOMIC | SHADER_PRIMITIVE_INDEX | SHADER_INT64 | SUBGROUP | SUBGROUP_BARRIER), features_webgpu: FeaturesWebGPU(DEPTH_CLIP_CONTROL | DEPTH32FLOAT_STENCIL8 | TEXTURE_COMPRESSION_BC | TEXTURE_COMPRESSION_BC_SLICED_3D | TEXTURE_COMPRESSION_ETC2 | TEXTURE_COMPRESSION_ASTC | TIMESTAMP_QUERY | INDIRECT_FIRST_INSTANCE | SHADER_F16 | RG11B10UFLOAT_RENDERABLE | BGRA8UNORM_STORAGE | FLOAT32_FILTERABLE | DUAL_SOURCE_BLENDING) } }) } => AdapterInfo { name: "Apple M1", vendor: 0, device: 0, device_type: IntegratedGpu, driver: "", driver_info: "", backend: Metal }
+2025-11-01T12:16:34.947793Z  INFO burn_train::learner::train_val: Fitting the model:
+ LstmNet {
+  lstm: Lstm {d_input: 1, d_hidden: 20, bias: true, params: 1840}
+  fc: Linear {d_input: 20, d_output: 1, bias: true, params: 21}
+  params: 1861
+}
+2025-11-01T12:16:35.013906Z  INFO burn_train::learner::epoch: Executing training step for epoch 1
+2025-11-01T12:16:35.029799Z  INFO burn_train::learner::epoch: Iteration 1
+2025-11-01T12:16:35.056435Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-01T12:16:35.056758Z  INFO cubecl_runtime::tune::tune_cache: Loaded 36 autotune cached entries
+2025-11-01T12:16:35.056813Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 32, n: 32, k: 1, lhs_pow2_factor: 0, rhs_pow2_factor: 2, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: Contiguous, matrix_layout_rhs: Contiguous }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: OuterProduct }
+2025-11-01T12:16:35.859544Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 32, n: 32, k: 32, lhs_pow2_factor: 2, rhs_pow2_factor: 2, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: Contiguous, matrix_layout_rhs: Contiguous }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: General }
+2025-11-01T12:16:36.177479Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 32, n: 1, k: 32, lhs_pow2_factor: 2, rhs_pow2_factor: 0, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: Contiguous, matrix_layout_rhs: Contiguous }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: MatVec }
+2025-11-01T12:16:36.250389Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-01T12:16:36.250545Z  INFO cubecl_runtime::tune::tune_cache: Loaded 4 autotune cached entries
+2025-11-01T12:16:36.310105Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-01T12:16:36.310291Z  INFO cubecl_runtime::tune::tune_cache: Loaded 15 autotune cached entries
+2025-11-01T12:16:36.310310Z  INFO cubecl_runtime::tune::tuner: Tuning FusedReduceAutotuneKey - ReduceKey: ReduceAutotuneKey { elem_input: Float(F32), elem_output: Float(F32), elem_acc: Float(F32), potential_line_size: 1, axis_is_contiguous: false, reduce_axis_shape: 32, reduce_count: 1 }, FuseNumReads: 2, FuseNumWrites: 2, FuseNumOps: 4
+2025-11-01T12:16:36.328323Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-01T12:16:36.328643Z  INFO cubecl_runtime::tune::tune_cache: Loaded 8 autotune cached entries
+2025-11-01T12:16:36.457010Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 32, n: 1, k: 32, lhs_pow2_factor: 2, rhs_pow2_factor: 0, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: MildlyPermuted { transposed: true, batch_swap: false }, matrix_layout_rhs: Contiguous }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: MatVec }
+2025-11-01T12:16:36.562005Z  INFO cubecl_runtime::tune::tuner: Tuning FusedReduceAutotuneKey - ReduceKey: ReduceAutotuneKey { elem_input: Float(F32), elem_output: Float(F32), elem_acc: Float(F32), potential_line_size: 1, axis_is_contiguous: false, reduce_axis_shape: 32, reduce_count: 64 }, FuseNumReads: 2, FuseNumWrites: 2, FuseNumOps: 1
+2025-11-01T12:16:36.564805Z  INFO cubecl_runtime::tune::tuner: Tuning ReduceAutotuneKey - ElemInput: Float(F32), ElemOutput: Float(F32), ElemAcc: Float(F32), PotentialLineSize: 1, AxisIsContiguous: false, ReduceAxisShape: 32, ReduceCount: 64
+2025-11-01T12:16:36.667563Z  INFO cubecl_runtime::tune::tuner: Tuning FusedReduceAutotuneKey - ReduceKey: ReduceAutotuneKey { elem_input: Float(F32), elem_output: Float(F32), elem_acc: Float(F32), potential_line_size: 1, axis_is_contiguous: false, reduce_axis_shape: 32, reduce_count: 64 }, FuseNumReads: 4, FuseNumWrites: 2, FuseNumOps: 16
+2025-11-01T12:16:36.777914Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 32, n: 32, k: 32, lhs_pow2_factor: 2, rhs_pow2_factor: 2, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: Contiguous, matrix_layout_rhs: MildlyPermuted { transposed: true, batch_swap: false } }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: General }
+2025-11-01T12:16:36.957870Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 32, n: 32, k: 32, lhs_pow2_factor: 2, rhs_pow2_factor: 2, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: MildlyPermuted { transposed: true, batch_swap: false }, matrix_layout_rhs: Contiguous }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: General }
+2025-11-01T12:16:37.020667Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-01T12:16:37.020830Z  INFO cubecl_runtime::tune::tune_cache: Loaded 8 autotune cached entries
+2025-11-01T12:16:37.020850Z  INFO cubecl_runtime::tune::tuner: Tuning FusedMatmulAutotuneKey - MatmulKey: MatmulAutotuneKey { definition: MatmulProblemDefinition { m: 32, n: 32, k: 32, lhs_pow2_factor: 2, rhs_pow2_factor: 2, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: Contiguous, matrix_layout_rhs: MildlyPermuted { transposed: true, batch_swap: false } }, analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: General } }, NumOutBuffers: 1, NumOps: 2
+2025-11-01T12:16:37.280387Z  INFO cubecl_runtime::tune::tuner: Tuning FusedReduceAutotuneKey - ReduceKey: ReduceAutotuneKey { elem_input: Float(F32), elem_output: Float(F32), elem_acc: Float(F32), potential_line_size: 1, axis_is_contiguous: false, reduce_axis_shape: 32, reduce_count: 64 }, FuseNumReads: 16, FuseNumWrites: 8, FuseNumOps: 64
+2025-11-01T12:16:37.490678Z  INFO cubecl_runtime::tune::tuner: Tuning FusedReduceAutotuneKey - ReduceKey: ReduceAutotuneKey { elem_input: Float(F32), elem_output: Float(F32), elem_acc: Float(F32), potential_line_size: 1, axis_is_contiguous: false, reduce_axis_shape: 32, reduce_count: 64 }, FuseNumReads: 16, FuseNumWrites: 4, FuseNumOps: 64
+2025-11-01T12:16:37.591569Z  INFO cubecl_runtime::tune::tuner: Tuning MatmulAutotuneKey - Definition: MatmulProblemDefinition { m: 1, n: 32, k: 32, lhs_pow2_factor: 0, rhs_pow2_factor: 2, elem_lhs: Float(F32), elem_rhs: Float(F32), elem_out: Float(F32), matrix_layout_lhs: Contiguous, matrix_layout_rhs: Contiguous }, Analysis: MatmulAutotuneAnalysis { scale_global: Small, kind: VecMat }
+2025-11-01T12:16:37.969611Z  INFO burn_train::learner::epoch: Iteration 2
+2025-11-01T12:16:38.604468Z ERROR wgpu::backend::wgpu_core: Handling wgpu errors as fatal by default
+2025-11-01T12:16:38.604572Z ERROR burn_train::learner::application_logger: PANIC => panicked at /Users/hangyeonghyeon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-25.0.2/src/backend/wgpu_core.rs:1051:30:
+wgpu error: Validation Error
+
+Caused by:
+  In Device::create_shader_module
+    
+Shader '' parsing error: redefinition of `powf_primitive`
+    ┌─ wgsl:258:4
+    │
+258 │ fn powf_primitive(lhs: f32, rhs: f32) -> f32 {
+    │    ^^^^^^^^^^^^^^ previous definition of `powf_primitive`
+    ·
+283 │ fn powf_primitive(lhs: f32, rhs: f32) -> f32 {
+    │    ^^^^^^^^^^^^^^ redefinition of `powf_primitive`
+
+
+      redefinition of `powf_primitive`
+
+
+2025-11-01T12:16:38.629575Z ERROR burn_train::learner::application_logger: PANIC => panicked at /Users/hangyeonghyeon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-fusion-0.18.0/src/stream/execution/ordering.rs:51:13:
+Ordering is bigger than operations
+2025-11-01T12:16:38.707940Z ERROR burn_train::learner::application_logger: PANIC => panicked at library/core/src/panicking.rs:233:5:
+panic in a destructor during cleanup
