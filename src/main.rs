@@ -1,10 +1,12 @@
 #![recursion_limit = "256"] // ✅ 크레이트 전체에 적용
 
+mod linear;
 mod lstm;
 // mod transformer;
 fn main() {
     // lstm::example();
     // lstm::infer_example();
     // lstm::basic::evaluate();
-    lstm::basic3::example();
+    // lstm::basic3::example();
+    linear::basic1::example();
 }

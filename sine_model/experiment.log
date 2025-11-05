@@ -57,3 +57,48 @@ Shader '' parsing error: redefinition of `powf_primitive`
 Ordering is bigger than operations
 2025-11-01T12:16:38.707940Z ERROR burn_train::learner::application_logger: PANIC => panicked at library/core/src/panicking.rs:233:5:
 panic in a destructor during cleanup
+2025-11-05T10:48:04.659174Z  INFO cubecl_wgpu::runtime: Using adapter AdapterInfo { name: "Apple M1", vendor: 0, device: 0, device_type: IntegratedGpu, driver: "", driver_info: "", backend: Metal }
+2025-11-05T10:48:04.821072Z  INFO cubecl_wgpu::runtime: Created wgpu compute server on device Device { inner: Core(CoreDevice { context: ContextWgpuCore { type: "Native" }, id: Id(0,1), error_sink: Mutex { data: ErrorSink }, features: Features { features_wgpu: FeaturesWGPU(SHADER_FLOAT32_ATOMIC | TEXTURE_FORMAT_16BIT_NORM | TEXTURE_COMPRESSION_ASTC_HDR | TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES | TIMESTAMP_QUERY_INSIDE_ENCODERS | TEXTURE_BINDING_ARRAY | SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING | STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING | PARTIALLY_BOUND_BINDING_ARRAY | MULTI_DRAW_INDIRECT | PUSH_CONSTANTS | ADDRESS_MODE_CLAMP_TO_ZERO | ADDRESS_MODE_CLAMP_TO_BORDER | POLYGON_MODE_LINE | VERTEX_WRITABLE_STORAGE | CLEAR_TEXTURE | MSL_SHADER_PASSTHROUGH | TEXTURE_ATOMIC | SHADER_PRIMITIVE_INDEX | SHADER_INT64 | SUBGROUP | SUBGROUP_BARRIER), features_webgpu: FeaturesWebGPU(DEPTH_CLIP_CONTROL | DEPTH32FLOAT_STENCIL8 | TEXTURE_COMPRESSION_BC | TEXTURE_COMPRESSION_BC_SLICED_3D | TEXTURE_COMPRESSION_ETC2 | TEXTURE_COMPRESSION_ASTC | TIMESTAMP_QUERY | INDIRECT_FIRST_INSTANCE | SHADER_F16 | RG11B10UFLOAT_RENDERABLE | BGRA8UNORM_STORAGE | FLOAT32_FILTERABLE | DUAL_SOURCE_BLENDING) } }) } => AdapterInfo { name: "Apple M1", vendor: 0, device: 0, device_type: IntegratedGpu, driver: "", driver_info: "", backend: Metal }
+2025-11-05T10:48:04.639880Z  INFO burn_train::learner::train_val: Fitting the model:
+ LstmNet {
+  lstm: Lstm {d_input: 1, d_hidden: 20, bias: true, params: 1840}
+  fc: Linear {d_input: 20, d_output: 1, bias: true, params: 21}
+  params: 1861
+}
+2025-11-05T10:48:04.880694Z  INFO burn_train::learner::epoch: Executing training step for epoch 1
+2025-11-05T10:48:04.910101Z  INFO burn_train::learner::epoch: Iteration 1
+2025-11-05T10:48:05.003476Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-05T10:48:05.003920Z  INFO cubecl_runtime::tune::tune_cache: Loaded 43 autotune cached entries
+2025-11-05T10:48:05.591661Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-05T10:48:05.591873Z  INFO cubecl_runtime::tune::tune_cache: Loaded 4 autotune cached entries
+2025-11-05T10:48:05.695204Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-05T10:48:05.695440Z  INFO cubecl_runtime::tune::tune_cache: Loaded 20 autotune cached entries
+2025-11-05T10:48:05.714867Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-05T10:48:05.715108Z  INFO cubecl_runtime::tune::tune_cache: Loaded 9 autotune cached entries
+2025-11-05T10:48:06.094491Z  INFO cubecl_runtime::tune::tune_cache: Load autotune cache ...
+2025-11-05T10:48:06.094738Z  INFO cubecl_runtime::tune::tune_cache: Loaded 9 autotune cached entries
+2025-11-05T10:48:06.985901Z  INFO burn_train::learner::epoch: Iteration 2
+2025-11-05T10:48:07.719899Z ERROR wgpu::backend::wgpu_core: Handling wgpu errors as fatal by default
+2025-11-05T10:48:07.720033Z ERROR burn_train::learner::application_logger: PANIC => panicked at /Users/hangyeonghyeon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-25.0.2/src/backend/wgpu_core.rs:1051:30:
+wgpu error: Validation Error
+
+Caused by:
+  In Device::create_shader_module
+    
+Shader '' parsing error: redefinition of `powf_primitive`
+    ┌─ wgsl:258:4
+    │
+258 │ fn powf_primitive(lhs: f32, rhs: f32) -> f32 {
+    │    ^^^^^^^^^^^^^^ previous definition of `powf_primitive`
+    ·
+283 │ fn powf_primitive(lhs: f32, rhs: f32) -> f32 {
+    │    ^^^^^^^^^^^^^^ redefinition of `powf_primitive`
+
+
+      redefinition of `powf_primitive`
+
+
+2025-11-05T10:48:07.743653Z ERROR burn_train::learner::application_logger: PANIC => panicked at /Users/hangyeonghyeon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/burn-fusion-0.18.0/src/stream/execution/ordering.rs:51:13:
+Ordering is bigger than operations
+2025-11-05T10:48:07.841997Z ERROR burn_train::learner::application_logger: PANIC => panicked at library/core/src/panicking.rs:233:5:
+panic in a destructor during cleanup
