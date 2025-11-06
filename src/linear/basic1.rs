@@ -1,5 +1,7 @@
 use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
+use burn::optim::Sgd;
+use burn::optim::SgdConfig;
 use burn::tensor::Tensor;
 
 pub fn example() {
@@ -13,9 +15,11 @@ pub fn example() {
 
     let w = Tensor::<B, 1>::zeros([1], &device).require_grad();
     let b = Tensor::<B, 1>::zeros([1], &device).require_grad(); // shape: [1]
+
+    let mut optimizer = SgdConfig::new();
     println!("{}", x_train);
     println!("{:?}", x_train.shape());
     println!("{}", y_train);
 
-    println!("{}",w);
+    println!("{}", w);
 }
