@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-burn = { version = "0.18.0", features = ["train", "wgpu", "vision","autodiff"] }
+burn = { version = "0.19.1", features = ["train", "wgpu", "vision","autodiff"] }
 csv = "1.4.0"
 rand = "0.9.2"
 serde = "1.0.228"
