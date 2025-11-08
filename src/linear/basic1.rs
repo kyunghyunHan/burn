@@ -1,28 +1,30 @@
 use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
-use burn::module::Module;
-use burn::nn::{Linear, LinearConfig};
-use burn::optim::{GradientsParams, LearningRate, Optimizer, SgdConfig};
 use burn::tensor::Tensor;
 
-const LEARNING_RATE: LearningRate = 0.01;
-const EPOCHS: usize = 500;
+const LEARNING_RATE: f32 = 0.01;
+const EPOCHS: usize = 2000;
 
 pub fn example() {
     type BackendF = Wgpu<f32>;
     type AD = autodiff::Autodiff<BackendF>;
 
     let device = WgpuDevice::default();
-    let x_train = Tensor::<AD, 2>::from_floats([[1.0f32], [2.0], [3.0]], &device);
-    let y_train = Tensor::<AD, 2>::from_floats([[2.0f32], [4.0], [6.0]], &device);
 
-    // 단일 선형 계층 (입력 1, 출력 1)
-    let mut model: Linear<AD> = LinearConfig::new(1, 1).init(&device);
-    let mut optimizer = SgdConfig::new().init();
+    let x_train = Tensor::<AD, 1>::from_floats([1.0f32, 2.0, 3.0], &device);
+    let y_train = Tensor::<AD, 1>::from_floats([2.0f32, 4.0, 6.0], &device);
+    let sample_len = x_train.dims()[0];
 
-    for epoch in 0..EPOCHS {
-        let preds = model.forward(x_train.clone());
-        let loss = (preds - y_train.clone()).powi_scalar(2).mean();
+    let mut w_value = 0.0f32;
+    let mut b_value = 0.0f32;
+
+    for epoch in 0..=EPOCHS {
+        let w = Tensor::<AD, 1>::from_floats([w_value], &device).require_grad();
+        let b = Tensor::<AD, 1>::from_floats([b_value], &device).require_grad();
+
+        let hypothesis =
+            x_train.clone() * w.clone().expand([sample_len]) + b.clone().expand([sample_len]);
+        let loss = (hypothesis - y_train.clone()).powi_scalar(2).mean();
         let loss_value = loss
             .clone()
             .into_data()
@@ -30,21 +32,30 @@ pub fn example() {
             .expect("loss to_vec")[0];
 
         let grads = loss.backward();
-        let grad_params = GradientsParams::from_grads(grads, &model);
-        model = optimizer.step(LEARNING_RATE, model, grad_params);
+        let grad_w = w
+            .grad(&grads)
+            .expect("Missing grad for w")
+            .into_data()
+            .to_vec::<f32>()
+            .expect("grad w to_vec")[0];
+        let grad_b = b
+            .grad(&grads)
+            .expect("Missing grad for b")
+            .into_data()
+            .to_vec::<f32>()
+            .expect("grad b to_vec")[0];
 
-        if epoch % 100 == 0 || epoch == EPOCHS - 1 {
-            println!("epoch {epoch:03}: loss = {loss_value:.6}");
+        w_value -= LEARNING_RATE * grad_w;
+        b_value -= LEARNING_RATE * grad_b;
+
+        if epoch % 100 == 0 {
+            println!(
+                "Epoch {:4}/{:4} W: {:.3}, b: {:.3} Cost: {:.6}",
+                epoch, EPOCHS, w_value, b_value, loss_value
+            );
         }
     }
 
-    // 추론 예시
-    let x_test = Tensor::<AD, 2>::from_floats([[4.0f32]], &device);
-    let prediction = model
-        .forward(x_test)
-        .into_data()
-        .to_vec::<f32>()
-        .expect("prediction to_vec")[0];
-
-    println!("SGD lr={LEARNING_RATE}: f(4) ≈ {prediction:.3}");
+    let prediction = 4.0 * w_value + b_value;
+    println!("학습 완료 → f(4) ≈ {prediction:.3}");
 }

@@ -1,15 +1,20 @@
-use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::backend::autodiff;
-use burn::nn::{Lstm, LstmConfig, Linear, LinearConfig, loss::{MseLoss, Reduction}};
-use burn::prelude::*;
-use burn::optim::AdamConfig;
-use burn::tensor::backend::AutodiffBackend;
-use burn::train::{TrainStep, ValidStep, TrainOutput, RegressionOutput, metric::LossMetric, LearnerBuilder};
-use burn::record::CompactRecorder;
-use burn::data::dataloader::{DataLoaderBuilder, batcher::Batcher};
+use burn::backend::wgpu::{Wgpu, WgpuDevice};
+use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
 use burn::data::dataset::Dataset;
-use std::f32::consts::PI;
-use burn::record::Recorder;
+use burn::nn::{
+    loss::{MseLoss, Reduction},
+    Linear, LinearConfig, Lstm, LstmConfig,
+};
+use burn::optim::AdamConfig;
+use burn::prelude::*;
+use burn::record::{CompactRecorder, Recorder};
+use burn::tensor::backend::AutodiffBackend;
+use burn::tensor::Int;
+use burn::train::{
+    metric::LossMetric, LearnerBuilder, LearningStrategy, RegressionOutput, TrainOutput, TrainStep,
+    ValidStep,
+};
 
 // ===========================
 // 간단한 데이터셋 (사인파)
@@ -62,30 +67,22 @@ impl<B: Backend> Batcher<B, f32, SineBatch<B>> for SineBatcher<B> {
         for i in 0..(items.len() - self.seq_len) {
             // ✅ [seq_len, 1] 형태의 2D 배열 생성
             let seq_slice: Vec<f32> = (0..self.seq_len)
-            .map(|j| items[i + j])
-            .collect();
-        
-        let x_tensor = Tensor::<B, 1>::from_floats(
-            seq_slice.as_slice(),
-            &self.device,
-        ).reshape([self.seq_len as i32, 1]); // [seq_len, 1]
+                .map(|j| items[i + j])
+                .collect();
+
+            let x_tensor = Tensor::<B, 1>::from_floats(seq_slice.as_slice(), &self.device)
+                .reshape([self.seq_len, 1]); // [seq_len, 1]
 
             let value = [[items[i + self.seq_len]]]; // ✅ [1, 1] 2D 배열
-            let y_tensor = Tensor::<B, 2>::from_floats(
-                value,
-                &self.device,
-            );
+            let y_tensor = Tensor::<B, 2>::from_floats(value, &self.device);
 
             xs.push(x_tensor);
             ys.push(y_tensor);
         }
 
         // ✅ 최종 텐서 모양: [batch, seq, feature], [batch, 1]
-        let x = Tensor::cat(xs, 0).reshape([
-            (items.len() - self.seq_len) as i32,
-            self.seq_len as i32,
-            1,
-        ]);
+        let x =
+            Tensor::cat(xs, 0).reshape([(items.len() - self.seq_len), self.seq_len, 1]);
         let y = Tensor::cat(ys, 0);
 
         SineBatch { x, y }
@@ -111,14 +108,10 @@ impl<B: Backend> LstmModel<B> {
     }
     fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 2> {
         let (out, _) = self.lstm.forward(x, None);
-    
-        // 마지막 시점 인덱스 텐서 생성
-        let idx_val = [out.dims()[1] as i64 - 1];
-        let last_index = Tensor::<B, 1, Int>::from_data(
-            TensorData::from(idx_val),
-            &out.device(),
-        );
-        let last = out.select(1, last_index).squeeze(1); // ✅ [batch, hidden]
+
+        let seq_dim = out.dims()[1] as i64 - 1;
+        let last_index = Tensor::<B, 1, Int>::from_ints([seq_dim], &out.device());
+        let last = out.select(1, last_index).squeeze::<2>(); // ✅ [batch, hidden]
         self.fc.forward(last)
     }
 
@@ -157,12 +150,13 @@ pub fn example() {
     // 데이터 준비
     let dataset = SineDataset::new(200);
     let batcher_train = SineBatcher::<AD>::new(device.clone(), SEQ_LEN);
-    let batcher_valid = SineBatcher::<<AD as AutodiffBackend>::InnerBackend>::new(device.clone(), SEQ_LEN);
+    let batcher_valid =
+        SineBatcher::<<AD as AutodiffBackend>::InnerBackend>::new(device.clone(), SEQ_LEN);
 
     let loader_train = DataLoaderBuilder::<AD, f32, SineBatch<AD>>::new(batcher_train)
-    .batch_size(32)
-    .num_workers(1)
-    .build(dataset.clone());
+        .batch_size(32)
+        .num_workers(1)
+        .build(dataset.clone());
 
     let loader_valid = DataLoaderBuilder::<BackendF, f32, SineBatch<BackendF>>::new(batcher_valid)
         .batch_size(32)
@@ -177,13 +171,16 @@ pub fn example() {
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
-        .devices(vec![device.clone()])
+        .learning_strategy(LearningStrategy::SingleDevice(device.clone()))
         .num_epochs(EPOCHS)
         .build(model, optim, 1e-3);
 
     let trained = learner.fit(loader_train, loader_valid);
 
-    trained.save_file("./checkpoints/final", &CompactRecorder::new()).unwrap();
+    trained
+        .model
+        .save_file("./checkpoints/final", &CompactRecorder::new())
+        .unwrap();
 }
 pub fn test() {
     type BackendF = Wgpu<f32>;

@@ -6,13 +6,14 @@ use burn::nn::{
     loss::{MseLoss, Reduction},
     Linear, LinearConfig, Lstm, LstmConfig,
 };
-use burn::module::AutodiffModule;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::{Int, Tensor};
 use rand::Rng;
-use burn::train::{LearnerBuilder, RegressionOutput, TrainOutput, TrainStep, ValidStep};
+use burn::train::{
+    LearnerBuilder, LearningStrategy, RegressionOutput, TrainOutput, TrainStep, ValidStep,
+};
 
 const SEQ_LEN: usize = 10;
 const INPUT_DIM: usize = 1;
@@ -122,7 +123,7 @@ impl<B: Backend> LstmNet<B> {
     fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 2> {
         let (out, _) = self.lstm.forward(x, None);
         let idx = Tensor::<B, 1, Int>::from_ints([SEQ_LEN as i64 - 1], &out.device());
-        let last = out.select(1, idx).squeeze(1);
+        let last = out.select(1, idx).squeeze::<2>();
         self.fc.forward(last)
     }
 
@@ -175,7 +176,7 @@ pub fn example() {
     let optim = AdamConfig::new().init();
 
     let learner = LearnerBuilder::new("./sine_model")
-        .devices(vec![device.clone()])
+        .learning_strategy(LearningStrategy::SingleDevice(device.clone()))
         .num_epochs(EPOCHS)
         .build(model, optim, LR);
 
@@ -194,7 +195,7 @@ pub fn example() {
         seq[idx][0] = *value;
     }
 
-    let infer_model = trained.valid();
+    let infer_model = trained.model;
     let x = Tensor::<BackendF, 3>::from_floats([seq], &device);
     let y = infer_model
         .forward(x)

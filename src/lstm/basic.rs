@@ -14,10 +14,10 @@ use burn::record::{CompactRecorder, Recorder};
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
 use burn::train::{
-    metric::LossMetric, LearnerBuilder, RegressionOutput, TrainOutput, TrainStep, ValidStep,
+    metric::LossMetric, LearnerBuilder, LearningStrategy, RegressionOutput, TrainOutput, TrainStep,
+    ValidStep,
 };
 use serde::Deserialize;
-use std::path::Path;
 
 // =========================
 // 하이퍼파라미터
@@ -170,7 +170,7 @@ impl<B: Backend> LstmNet<B> {
         // 마지막 타임스텝의 히든만 선택
         // select(dim=1, index=SEQ_LEN-1) → [batch, hidden]
         let index = Tensor::<B, 1, Int>::from_ints([SEQ_LEN as i64 - 1], &out.device());
-        let last = out.select(1, index).squeeze(1);
+        let last = out.select(1, index).squeeze::<2>();
         self.fc.forward(last) // [batch, 1]
     }
 
@@ -236,13 +236,14 @@ pub fn example() {
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
-        .devices(vec![device.clone()])
+        .learning_strategy(LearningStrategy::SingleDevice(device.clone()))
         .num_epochs(EPOCHS)
         .build(model, optim, LEARNING_RATE);
 
     let trained = learner.fit(loader, loader_valid);
 
     trained
+        .model
         .save_file("./model/final", &CompactRecorder::new())
         .expect("모델 저장 실패");
 }
