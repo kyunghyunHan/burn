@@ -9,5 +9,5 @@ fn main() {
     // lstm::basic::evaluate();
     // lstm::basic3::example();
     // linear::basic1::example();
-    linear::basic2::example();
+    linear::basic2::example()
 }
