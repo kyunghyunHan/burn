@@ -1,9 +1,10 @@
 use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::tensor::Tensor;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 const LEARNING_RATE: f32 = 0.01;
-const EPOCHS: usize = 2000;
+const EPOCHS: usize = 1999;
 
 pub fn example() {
     type BackendF = Wgpu<f32>;
@@ -58,4 +59,12 @@ pub fn example() {
 
     let prediction = 4.0 * w_value + b_value;
     println!("학습 완료 → f(4) ≈ {prediction:.3}");
+
+    // PyTorch: torch.manual_seed(3); torch.rand(1)
+    println!("\n랜덤 시드가 3일 때");
+    let mut rng = StdRng::seed_from_u64(3);
+    for i in 1..=2 {
+        let sample: f32 = rng.random();
+        println!("rand sample #{i}: [{sample:.6}]");
+    }
 }
