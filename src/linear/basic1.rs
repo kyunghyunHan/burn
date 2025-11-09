@@ -60,6 +60,21 @@ pub fn example() {
     let prediction = 4.0 * w_value + b_value;
     println!("학습 완료 → f(4) ≈ {prediction:.3}");
 
+    // ===== Autograd walk-through =====
+    let w = Tensor::<AD, 1>::from_floats([2.0f32], &device).require_grad();
+    let y = w.clone().powi_scalar(2);
+    let two = Tensor::<AD, 1>::from_floats([2.0f32], &device);
+    let five = Tensor::<AD, 1>::from_floats([5.0f32], &device);
+    let z = two.clone() * y + five;
+    let grads = z.mean().backward();
+    let grad_w = w
+        .grad(&grads)
+        .expect("autograd grad for w")
+        .into_data()
+        .to_vec::<f32>()
+        .expect("autograd grad to_vec")[0];
+    println!("수식을 w로 미분한 값 : {grad_w}");
+
     // PyTorch: torch.manual_seed(3); torch.rand(1)
     println!("\n랜덤 시드가 3일 때");
     let mut rng = StdRng::seed_from_u64(3);
