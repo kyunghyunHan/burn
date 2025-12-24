@@ -3,7 +3,7 @@
 mod linear;
 mod logistic;
 mod lstm;
-// mod transformer;
+mod transformer;
 fn main() {
     // lstm::example();
     // lstm::infer_example();
@@ -11,5 +11,6 @@ fn main() {
     // lstm::basic3::example();
     // linear::basic1::example();
     // logistic::basic1::example();
-    linear::basic2::example()
+    // linear::basic2::example()
+    transformer::basic1::example()
 }
