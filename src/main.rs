@@ -5,12 +5,13 @@ mod logistic;
 mod lstm;
 mod transformer;
 fn main() {
-    // lstm::example();
+    lstm::basic::example();
     // lstm::infer_example();
     // lstm::basic::evaluate();
     // lstm::basic3::example();
     // linear::basic1::example();
     // logistic::basic1::example();
     // linear::basic2::example()
-    transformer::basic1::example()
+    // transformer::basic1::example()
+
 }
