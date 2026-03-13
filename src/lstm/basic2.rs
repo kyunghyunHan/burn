@@ -6,14 +6,15 @@ use burn::nn::{
     loss::{MseLoss, Reduction},
     Linear, LinearConfig, Lstm, LstmConfig,
 };
+use burn::lr_scheduler::constant::ConstantLr;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::record::{CompactRecorder, Recorder};
 use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::Int;
 use burn::train::{
-    metric::LossMetric, LearnerBuilder, LearningStrategy, RegressionOutput, TrainOutput, TrainStep,
-    ValidStep,
+    metric::LossMetric, InferenceStep, Learner, LearningResult, RegressionOutput,
+    SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
 };
 
 // ===========================
@@ -122,15 +123,21 @@ impl<B: Backend> LstmModel<B> {
     }
 }
 
-impl<B: AutodiffBackend> TrainStep<SineBatch<B>, RegressionOutput<B>> for LstmModel<B> {
-    fn step(&self, batch: SineBatch<B>) -> TrainOutput<RegressionOutput<B>> {
+impl<B: AutodiffBackend> TrainStep for LstmModel<B> {
+    type Input = SineBatch<B>;
+    type Output = RegressionOutput<B>;
+
+    fn step(&self, batch: Self::Input) -> TrainOutput<Self::Output> {
         let out = self.forward_reg(batch.x, batch.y);
         TrainOutput::new(self, out.loss.backward(), out)
     }
 }
 
-impl<B: Backend> ValidStep<SineBatch<B>, RegressionOutput<B>> for LstmModel<B> {
-    fn step(&self, batch: SineBatch<B>) -> RegressionOutput<B> {
+impl<B: Backend> InferenceStep for LstmModel<B> {
+    type Input = SineBatch<B>;
+    type Output = RegressionOutput<B>;
+
+    fn step(&self, batch: Self::Input) -> Self::Output {
         self.forward_reg(batch.x, batch.y)
     }
 }
@@ -167,15 +174,16 @@ pub fn example() {
     let model = LstmModel::new(&device, 1, HIDDEN_DIM, 1);
     let optim = AdamConfig::new().init();
 
-    let learner = LearnerBuilder::new("./checkpoints")
+    let learner = Learner::new(model, optim, ConstantLr::new(1e-3));
+
+    let trained: LearningResult<LstmModel<BackendF>> =
+        SupervisedTraining::new("./checkpoints", loader_train, loader_valid)
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
-        .learning_strategy(LearningStrategy::SingleDevice(device.clone()))
+        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
         .num_epochs(EPOCHS)
-        .build(model, optim, 1e-3);
-
-    let trained = learner.fit(loader_train, loader_valid);
+        .launch(learner);
 
     trained
         .model
@@ -200,10 +208,8 @@ pub fn test() {
         .collect();
 
     // shape 맞추기: [1, seq_len, 1]
-    let x = Tensor::<BackendF, 1>::from_floats(
-        test_input.as_slice(),
-        &device,
-    ).reshape([1, seq_len as i32, 1]);
+    let x = Tensor::<BackendF, 1>::from_floats(test_input.as_slice(), &device)
+        .reshape([1, seq_len, 1]);
 
     // ✅ 3. 추론 실행
     let output = model.forward(x).to_data();

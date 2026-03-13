@@ -2,12 +2,8 @@ use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
 use burn::data::dataset::Dataset;
-use burn::nn::{
-    loss::{MseLoss, Reduction},
-    Linear, LinearConfig, Lstm, LstmConfig,
-};
-use burn::tensor::Int; // 꼭 추가!
-
+use burn::nn::loss::{MseLoss, Reduction};
+use burn::nn::{Linear, LinearConfig};
 use burn::lr_scheduler::constant::ConstantLr;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
@@ -15,21 +11,21 @@ use burn::record::{CompactRecorder, Recorder};
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
 use burn::train::{
-    metric::LossMetric, InferenceStep, Learner, LearningResult, RegressionOutput,
-    SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
+    metric::LossMetric, InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput,
+    TrainStep, TrainingStrategy,
 };
 use serde::Deserialize;
 
 // =========================
-// 하이퍼파라미터
+// 하이퍼파라미터 (선형 모델)
 // =========================
 const INPUT_DIM: usize = 5;
-const HIDDEN_DIM: usize = 16;
 const OUTPUT_DIM: usize = 1;
-const SEQ_LEN: usize = 7;
-const BATCH: usize = 64;
-const EPOCHS: usize = 10;
-const LEARNING_RATE: f64 = 1e-3;
+const SEQ_LEN: usize = 14;
+const BATCH: usize = 128;
+const EPOCHS: usize = 40;
+const LEARNING_RATE: f64 = 5e-4;
+const EPS: f32 = 1e-6;
 
 // =========================
 // CSV 한 줄
@@ -74,10 +70,6 @@ impl StockDataset {
     fn len(&self) -> usize {
         self.rows.len()
     }
-
-    fn get(&self, idx: usize) -> Option<StockRow> {
-        self.rows.get(idx).cloned()
-    }
 }
 
 impl Dataset<StockRow> for StockDataset {
@@ -90,6 +82,62 @@ impl Dataset<StockRow> for StockDataset {
 }
 
 // =========================
+// 정규화 통계
+// =========================
+#[derive(Clone, Copy, Debug)]
+struct NormStats {
+    mean: [f32; INPUT_DIM],
+    std: [f32; INPUT_DIM],
+    y_mean: f32,
+    y_std: f32,
+}
+
+fn compute_stats(rows: &[StockRow]) -> NormStats {
+    let n = rows.len() as f32;
+    let mut sum = [0.0f32; INPUT_DIM];
+    let mut sum_sq = [0.0f32; INPUT_DIM];
+    let mut y_sum = 0.0f32;
+    let mut y_sum_sq = 0.0f32;
+
+    for r in rows {
+        let feats = [r.Open, r.High, r.Low, r.Volume, r.Close];
+        for i in 0..INPUT_DIM {
+            sum[i] += feats[i];
+            sum_sq[i] += feats[i] * feats[i];
+        }
+        y_sum += r.Close;
+        y_sum_sq += r.Close * r.Close;
+    }
+
+    let mut mean = [0.0f32; INPUT_DIM];
+    let mut std = [0.0f32; INPUT_DIM];
+    for i in 0..INPUT_DIM {
+        mean[i] = sum[i] / n;
+        let var = (sum_sq[i] / n) - mean[i] * mean[i];
+        std[i] = var.max(0.0).sqrt().max(EPS);
+    }
+
+    let y_mean = y_sum / n;
+    let y_var = (y_sum_sq / n) - y_mean * y_mean;
+    let y_std = y_var.max(0.0).sqrt().max(EPS);
+
+    NormStats {
+        mean,
+        std,
+        y_mean,
+        y_std,
+    }
+}
+
+fn normalize(v: f32, mean: f32, std: f32) -> f32 {
+    (v - mean) / std
+}
+
+fn denormalize(v: f32, mean: f32, std: f32) -> f32 {
+    v * std + mean
+}
+
+// =========================
 // DataLoader가 반환할 배치
 // =========================
 #[derive(Clone, Debug)]
@@ -99,17 +147,16 @@ struct StockBatch<B: Backend> {
 }
 
 // =========================
-/* Batcher: Vec<StockRow> -> (x,y) 시퀀스 윈도우들
-   items.len()가 SEQ_LEN+1 미만이면 학습에 사용할 수 없으므로 패닉 대신 명확히 에러를 냅니다.
-*/
+// Batcher: Vec<StockRow> -> (x,y) 시퀀스 윈도우
 // =========================
 struct StockBatcher<B: Backend> {
     device: B::Device,
+    stats: NormStats,
 }
 
 impl<B: Backend> StockBatcher<B> {
-    fn new(device: B::Device) -> Self {
-        Self { device }
+    fn new(device: B::Device, stats: NormStats) -> Self {
+        Self { device, stats }
     }
 }
 
@@ -117,8 +164,7 @@ impl<B: Backend> Batcher<B, StockRow, StockBatch<B>> for StockBatcher<B> {
     fn batch(&self, items: Vec<StockRow>, _device: &B::Device) -> StockBatch<B> {
         if items.len() <= SEQ_LEN {
             panic!(
-                "배치 내 샘플 수가 시퀀스 길이보다 작습니다: items.len()={}, SEQ_LEN={}. \
-                 batch_size를 늘리거나 DataLoader 셔플을 조정하세요.",
+                "배치 내 샘플 수가 시퀀스 길이보다 작습니다: items.len()={}, SEQ_LEN={}.",
                 items.len(),
                 SEQ_LEN
             );
@@ -127,52 +173,50 @@ impl<B: Backend> Batcher<B, StockRow, StockBatch<B>> for StockBatcher<B> {
         let mut seqs: Vec<Tensor<B, 2>> = Vec::with_capacity(items.len() - SEQ_LEN);
         let mut targs: Vec<Tensor<B, 2>> = Vec::with_capacity(items.len() - SEQ_LEN);
 
-        // 안전한 슬라이딩 윈도우
         for i in 0..(items.len() - SEQ_LEN) {
             let mut seq_array = [[0.0f32; INPUT_DIM]; SEQ_LEN];
             for j in 0..SEQ_LEN {
                 let row = &items[i + j];
-                seq_array[j] = [row.Open, row.High, row.Low, row.Volume, row.Close];
+                let feats = [row.Open, row.High, row.Low, row.Volume, row.Close];
+                for k in 0..INPUT_DIM {
+                    seq_array[j][k] = normalize(feats[k], self.stats.mean[k], self.stats.std[k]);
+                }
             }
-            // 타겟은 윈도우 다음 시점의 Close
+
             let target_close = items[i + SEQ_LEN].Close;
+            let target_norm = normalize(target_close, self.stats.y_mean, self.stats.y_std);
 
             seqs.push(Tensor::<B, 2>::from_floats(seq_array, &self.device));
-            targs.push(Tensor::<B, 2>::from_floats([[target_close]], &self.device));
+            targs.push(Tensor::<B, 2>::from_floats([[target_norm]], &self.device));
         }
 
         let x = Tensor::cat(seqs, 0).reshape([items.len() - SEQ_LEN, SEQ_LEN, INPUT_DIM]);
-        let y = Tensor::cat(targs, 0); // [items.len()-SEQ_LEN, 1]
+        let y = Tensor::cat(targs, 0);
 
         StockBatch { x, y }
     }
 }
 
 // =========================
-// LSTM 모델
+// 선형 모델
 // =========================
 #[derive(Module, Debug)]
-struct LstmNet<B: Backend> {
-    lstm: Lstm<B>,
+struct LinearNet<B: Backend> {
     fc: Linear<B>,
 }
 
-impl<B: Backend> LstmNet<B> {
+impl<B: Backend> LinearNet<B> {
     fn new(dev: &B::Device) -> Self {
+        let in_dim = SEQ_LEN * INPUT_DIM;
         Self {
-            lstm: LstmConfig::new(INPUT_DIM, HIDDEN_DIM, true).init(dev),
-            fc: LinearConfig::new(HIDDEN_DIM, OUTPUT_DIM).init(dev),
+            fc: LinearConfig::new(in_dim, OUTPUT_DIM).init(dev),
         }
     }
 
     fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 2> {
-        // out: [batch, seq, hidden]
-        let (out, _) = self.lstm.forward(x, None);
-        // 마지막 타임스텝의 히든만 선택
-        // select(dim=1, index=SEQ_LEN-1) → [batch, hidden]
-        let index = Tensor::<B, 1, Int>::from_ints([SEQ_LEN as i64 - 1], &out.device());
-        let last = out.select(1, index).squeeze::<2>();
-        self.fc.forward(last) // [batch, 1]
+        let batch = x.dims()[0];
+        let flat = x.reshape([batch, SEQ_LEN * INPUT_DIM]);
+        self.fc.forward(flat)
     }
 
     fn forward_reg(&self, x: Tensor<B, 3>, y: Tensor<B, 2>) -> RegressionOutput<B> {
@@ -182,10 +226,7 @@ impl<B: Backend> LstmNet<B> {
     }
 }
 
-// =========================
-// 학습/검증 step
-// =========================
-impl<B: AutodiffBackend> TrainStep for LstmNet<B> {
+impl<B: AutodiffBackend> TrainStep for LinearNet<B> {
     type Input = StockBatch<B>;
     type Output = RegressionOutput<B>;
 
@@ -195,7 +236,7 @@ impl<B: AutodiffBackend> TrainStep for LstmNet<B> {
     }
 }
 
-impl<B: Backend> InferenceStep for LstmNet<B> {
+impl<B: Backend> InferenceStep for LinearNet<B> {
     type Input = StockBatch<B>;
     type Output = RegressionOutput<B>;
 
@@ -212,15 +253,13 @@ pub fn example() {
     type AD = autodiff::Autodiff<BackendF>;
     let device = WgpuDevice::default();
 
-    // 데이터 로드
     let dataset = StockDataset::load_csv("dataset/train.csv");
+    let stats = compute_stats(&dataset.rows);
 
-    // 트레인/밸리드 배처
-    let batcher_train = StockBatcher::<AD>::new(device.clone());
+    let batcher_train = StockBatcher::<AD>::new(device.clone(), stats);
     type Inner = <AD as AutodiffBackend>::InnerBackend;
-    let batcher_valid = StockBatcher::<Inner>::new(device.clone());
+    let batcher_valid = StockBatcher::<Inner>::new(device.clone(), stats);
 
-    // DataLoader
     let loader = DataLoaderBuilder::<AD, StockRow, StockBatch<AD>>::new(batcher_train)
         .batch_size(BATCH)
         .shuffle(42)
@@ -233,16 +272,12 @@ pub fn example() {
         .num_workers(1)
         .build(dataset);
 
-    // 모델 & 옵티마이저
-    let model = LstmNet::new(&device);
-    // ✅ 모델 파라미터로 옵티마이저 초기화
+    let model = LinearNet::new(&device);
     let optim = AdamConfig::new().init();
 
-    // 학습기
     let learner = Learner::new(model, optim, ConstantLr::new(LEARNING_RATE));
 
-    let trained: LearningResult<LstmNet<BackendF>> =
-        SupervisedTraining::new("./model", loader, loader_valid)
+    let trained = SupervisedTraining::new("./model", loader, loader_valid)
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
@@ -254,46 +289,56 @@ pub fn example() {
         .model
         .save_file("./model/final", &CompactRecorder::new())
         .expect("모델 저장 실패");
+
+    println!("✅ 학습 완료 (선형 모델)");
 }
 
 // =========================
-// 추론 예시 (Autodiff 불필요)
+// 추론 예시
 // =========================
 pub fn infer_example() {
     type B = Wgpu<f32>;
     let device = WgpuDevice::default();
 
-    // 모델 로드
-    let mut model = LstmNet::<B>::new(&device);
+    let train = StockDataset::load_csv("dataset/train.csv");
+    let stats = compute_stats(&train.rows);
+
+    let mut model = LinearNet::<B>::new(&device);
     let record = CompactRecorder::new()
         .load("./model/final".into(), &device)
         .expect("모델 로드 실패");
     model = model.load_record(record);
 
-    // 테스트 입력 (임의 데이터)
     let input = [[[1.0f32, 1.1, 0.9, 1000.0, 1.05]; SEQ_LEN]; 1];
-    let x = Tensor::<B, 3>::from_floats(input, &device);
+    let mut norm = [[[0.0f32; INPUT_DIM]; SEQ_LEN]; 1];
+    for t in 0..SEQ_LEN {
+        for k in 0..INPUT_DIM {
+            norm[0][t][k] = normalize(input[0][t][k], stats.mean[k], stats.std[k]);
+        }
+    }
 
-    // 추론
-    let out = model.forward(x).to_data();
-    println!("예측 값: {:?}", out);
+    let x = Tensor::<B, 3>::from_floats(norm, &device);
+    let out = model.forward(x).to_data().to_vec::<f32>().expect("to_vec 실패");
+    let pred = denormalize(out[0], stats.y_mean, stats.y_std);
+    println!("예측 값: {:.6}", pred);
 }
 
 // =========================
-// 평가 (MAE / RMSE) - Autodiff 불필요
+// 평가 (MAE / RMSE)
 // =========================
 pub fn evaluate() {
     type B = Wgpu<f32>;
     let device = WgpuDevice::default();
 
-    // 모델 로드
-    let mut model = LstmNet::<B>::new(&device);
+    let train = StockDataset::load_csv("dataset/train.csv");
+    let stats = compute_stats(&train.rows);
+
+    let mut model = LinearNet::<B>::new(&device);
     let record = CompactRecorder::new()
         .load("./model/final".into(), &device)
         .expect("모델 로드 실패");
     model = model.load_record(record);
 
-    // 테스트 데이터 로드
     let test = StockDataset::load_csv("dataset/test.csv");
     if test.len() <= SEQ_LEN {
         panic!(
@@ -306,24 +351,28 @@ pub fn evaluate() {
     let mut predictions = Vec::with_capacity(test.len() - SEQ_LEN);
     let mut targets = Vec::with_capacity(test.len() - SEQ_LEN);
 
-    // 시퀀스 단위 예측
     for i in 0..(test.len() - SEQ_LEN) {
         let mut seq_array = [[0.0f32; INPUT_DIM]; SEQ_LEN];
         for j in 0..SEQ_LEN {
             let row = &test.rows[i + j];
-            seq_array[j] = [row.Open, row.High, row.Low, row.Volume, row.Close];
+            let feats = [row.Open, row.High, row.Low, row.Volume, row.Close];
+            for k in 0..INPUT_DIM {
+                seq_array[j][k] = normalize(feats[k], stats.mean[k], stats.std[k]);
+            }
         }
+
         let x = Tensor::<B, 3>::from_floats([seq_array], &device);
-        let pred = model
+        let pred_norm = model
             .forward(x)
             .into_data()
             .to_vec::<f32>()
             .expect("to_vec 실패")[0];
+        let pred = denormalize(pred_norm, stats.y_mean, stats.y_std);
+
         predictions.push(pred);
         targets.push(test.rows[i + SEQ_LEN].Close);
     }
 
-    // MAE / RMSE
     let n = predictions.len() as f32;
     let mae: f32 = predictions
         .iter()

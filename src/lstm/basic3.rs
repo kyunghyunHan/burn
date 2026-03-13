@@ -6,13 +6,15 @@ use burn::nn::{
     loss::{MseLoss, Reduction},
     Linear, LinearConfig, Lstm, LstmConfig,
 };
+use burn::lr_scheduler::constant::ConstantLr;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::{Int, Tensor};
 use rand::Rng;
 use burn::train::{
-    LearnerBuilder, LearningStrategy, RegressionOutput, TrainOutput, TrainStep, ValidStep,
+    InferenceStep, Learner, LearningResult, RegressionOutput, SupervisedTraining, TrainOutput,
+    TrainStep, TrainingStrategy,
 };
 
 const SEQ_LEN: usize = 10;
@@ -134,15 +136,21 @@ impl<B: Backend> LstmNet<B> {
     }
 }
 
-impl<B: AutodiffBackend> TrainStep<SinBatch<B>, RegressionOutput<B>> for LstmNet<B> {
-    fn step(&self, batch: SinBatch<B>) -> TrainOutput<RegressionOutput<B>> {
+impl<B: AutodiffBackend> TrainStep for LstmNet<B> {
+    type Input = SinBatch<B>;
+    type Output = RegressionOutput<B>;
+
+    fn step(&self, batch: Self::Input) -> TrainOutput<Self::Output> {
         let out = self.forward_loss(batch.x, batch.y);
         TrainOutput::new(self, out.loss.backward(), out)
     }
 }
 
-impl<B: Backend> ValidStep<SinBatch<B>, RegressionOutput<B>> for LstmNet<B> {
-    fn step(&self, batch: SinBatch<B>) -> RegressionOutput<B> {
+impl<B: Backend> InferenceStep for LstmNet<B> {
+    type Input = SinBatch<B>;
+    type Output = RegressionOutput<B>;
+
+    fn step(&self, batch: Self::Input) -> Self::Output {
         self.forward_loss(batch.x, batch.y)
     }
 }
@@ -175,12 +183,13 @@ pub fn example() {
     let model = LstmNet::<AD>::new(&device);
     let optim = AdamConfig::new().init();
 
-    let learner = LearnerBuilder::new("./sine_model")
-        .learning_strategy(LearningStrategy::SingleDevice(device.clone()))
-        .num_epochs(EPOCHS)
-        .build(model, optim, LR);
+    let learner = Learner::new(model, optim, ConstantLr::new(LR));
 
-    let trained = learner.fit(train_loader, valid_loader);
+    let trained: LearningResult<LstmNet<BackendF>> =
+        SupervisedTraining::new("./sine_model", train_loader, valid_loader)
+        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
+        .num_epochs(EPOCHS)
+        .launch(learner);
 
     println!("✅ 학습 완료!");
 

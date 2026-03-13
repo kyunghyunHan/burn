@@ -5,7 +5,7 @@ mod logistic;
 mod lstm;
 mod transformer;
 fn main() {
-    lstm::basic::example();
+    lstm::basic4::example();
     // lstm::infer_example();
     // lstm::basic::evaluate();
     // lstm::basic3::example();
