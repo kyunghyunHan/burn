@@ -16,14 +16,7 @@ pub fn example() {
 
     // x: [공부시간, 과외시간], y: 합격 여부(0/1)
     let x_train = Tensor::<AD, 2>::from_floats(
-        [
-            [1., 2.],
-            [2., 3.],
-            [3., 1.],
-            [4., 3.],
-            [5., 3.],
-            [6., 2.],
-        ],
+        [[1., 2.], [2., 3.], [3., 1.], [4., 3.], [5., 3.], [6., 2.]],
         &device,
     );
     let y_train = Tensor::<AD, 2, Int>::from_ints([[0], [0], [0], [1], [1], [1]], &device);
@@ -80,7 +73,10 @@ pub fn example() {
     }
 
     println!("\n=== 학습된 파라미터 ===");
-    println!("W: [{:.4}, {:.4}], b: {:.4}", weights[0][0], weights[1][0], bias);
+    println!(
+        "W: [{:.4}, {:.4}], b: {:.4}",
+        weights[0][0], weights[1][0], bias
+    );
 
     println!("\n=== 새 샘플 예측 ===");
     let test_inputs = [[5.0f32, 2.0], [2.0, 1.0]];
@@ -95,10 +91,6 @@ pub fn example() {
         .expect("probs to_vec");
 
     for (i, prob) in probs.iter().enumerate() {
-        println!(
-            "입력 {:?} -> 합격 확률 {:.4}",
-            test_inputs[i],
-            prob
-        );
+        println!("입력 {:?} -> 합격 확률 {:.4}", test_inputs[i], prob);
     }
 }

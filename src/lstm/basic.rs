@@ -15,8 +15,8 @@ use burn::record::{CompactRecorder, Recorder};
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
 use burn::train::{
-    metric::LossMetric, InferenceStep, Learner, LearningResult, RegressionOutput,
-    SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
+    metric::LossMetric, ExecutionStrategy, InferenceStep, Learner, LearningResult,
+    RegressionOutput, SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
 };
 use serde::Deserialize;
 
@@ -243,12 +243,14 @@ pub fn example() {
 
     let trained: LearningResult<LstmNet<BackendF>> =
         SupervisedTraining::new("./model", loader, loader_valid)
-        .metric_train_numeric(LossMetric::new())
-        .metric_valid_numeric(LossMetric::new())
-        .with_file_checkpointer(CompactRecorder::new())
-        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
-        .num_epochs(EPOCHS)
-        .launch(learner);
+            .metric_train_numeric(LossMetric::new())
+            .metric_valid_numeric(LossMetric::new())
+            .with_file_checkpointer(CompactRecorder::new())
+            .with_training_strategy(TrainingStrategy::Default(ExecutionStrategy::single(
+                device.clone(),
+            )))
+            .num_epochs(EPOCHS)
+            .launch(learner);
 
     trained
         .model

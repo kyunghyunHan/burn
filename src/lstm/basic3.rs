@@ -2,20 +2,20 @@ use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
 use burn::data::dataset::Dataset;
+use burn::lr_scheduler::constant::ConstantLr;
 use burn::nn::{
     loss::{MseLoss, Reduction},
     Linear, LinearConfig, Lstm, LstmConfig,
 };
-use burn::lr_scheduler::constant::ConstantLr;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::{Int, Tensor};
-use rand::Rng;
 use burn::train::{
-    InferenceStep, Learner, LearningResult, RegressionOutput, SupervisedTraining, TrainOutput,
-    TrainStep, TrainingStrategy,
+    ExecutionStrategy, InferenceStep, Learner, LearningResult, RegressionOutput,
+    SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
 };
+use rand::Rng;
 
 const SEQ_LEN: usize = 10;
 const INPUT_DIM: usize = 1;
@@ -167,11 +167,12 @@ pub fn example() {
     let dataset_train = SinDataset::new(1000, SEQ_LEN + 1);
     let dataset_valid = SinDataset::new(200, SEQ_LEN + 1);
 
-    let train_loader = DataLoaderBuilder::<AD, f32, SinBatch<AD>>::new(SinBatcher::new(device.clone()))
-        .batch_size(BATCH)
-        .shuffle(42)
-        .num_workers(1)
-        .build(dataset_train);
+    let train_loader =
+        DataLoaderBuilder::<AD, f32, SinBatch<AD>>::new(SinBatcher::new(device.clone()))
+            .batch_size(BATCH)
+            .shuffle(42)
+            .num_workers(1)
+            .build(dataset_train);
 
     let valid_loader =
         DataLoaderBuilder::<Inner, f32, SinBatch<Inner>>::new(SinBatcher::new(device.clone()))
@@ -187,9 +188,11 @@ pub fn example() {
 
     let trained: LearningResult<LstmNet<BackendF>> =
         SupervisedTraining::new("./sine_model", train_loader, valid_loader)
-        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
-        .num_epochs(EPOCHS)
-        .launch(learner);
+            .with_training_strategy(TrainingStrategy::Default(ExecutionStrategy::single(
+                device.clone(),
+            )))
+            .num_epochs(EPOCHS)
+            .launch(learner);
 
     println!("✅ 학습 완료!");
 

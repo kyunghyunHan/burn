@@ -2,19 +2,19 @@ use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
 use burn::data::dataset::Dataset;
+use burn::lr_scheduler::constant::ConstantLr;
 use burn::nn::{
     loss::{MseLoss, Reduction},
     Linear, LinearConfig, Lstm, LstmConfig,
 };
-use burn::lr_scheduler::constant::ConstantLr;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::record::{CompactRecorder, Recorder};
 use burn::tensor::backend::AutodiffBackend;
 use burn::tensor::Int;
 use burn::train::{
-    metric::LossMetric, InferenceStep, Learner, LearningResult, RegressionOutput,
-    SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
+    metric::LossMetric, ExecutionStrategy, InferenceStep, Learner, LearningResult,
+    RegressionOutput, SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
 };
 
 // ===========================
@@ -67,9 +67,7 @@ impl<B: Backend> Batcher<B, f32, SineBatch<B>> for SineBatcher<B> {
 
         for i in 0..(items.len() - self.seq_len) {
             // ✅ [seq_len, 1] 형태의 2D 배열 생성
-            let seq_slice: Vec<f32> = (0..self.seq_len)
-                .map(|j| items[i + j])
-                .collect();
+            let seq_slice: Vec<f32> = (0..self.seq_len).map(|j| items[i + j]).collect();
 
             let x_tensor = Tensor::<B, 1>::from_floats(seq_slice.as_slice(), &self.device)
                 .reshape([self.seq_len, 1]); // [seq_len, 1]
@@ -82,14 +80,12 @@ impl<B: Backend> Batcher<B, f32, SineBatch<B>> for SineBatcher<B> {
         }
 
         // ✅ 최종 텐서 모양: [batch, seq, feature], [batch, 1]
-        let x =
-            Tensor::cat(xs, 0).reshape([(items.len() - self.seq_len), self.seq_len, 1]);
+        let x = Tensor::cat(xs, 0).reshape([(items.len() - self.seq_len), self.seq_len, 1]);
         let y = Tensor::cat(ys, 0);
 
         SineBatch { x, y }
     }
 }
-
 
 // ===========================
 // LSTM 모델
@@ -178,12 +174,14 @@ pub fn example() {
 
     let trained: LearningResult<LstmModel<BackendF>> =
         SupervisedTraining::new("./checkpoints", loader_train, loader_valid)
-        .metric_train_numeric(LossMetric::new())
-        .metric_valid_numeric(LossMetric::new())
-        .with_file_checkpointer(CompactRecorder::new())
-        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
-        .num_epochs(EPOCHS)
-        .launch(learner);
+            .metric_train_numeric(LossMetric::new())
+            .metric_valid_numeric(LossMetric::new())
+            .with_file_checkpointer(CompactRecorder::new())
+            .with_training_strategy(TrainingStrategy::Default(ExecutionStrategy::single(
+                device.clone(),
+            )))
+            .num_epochs(EPOCHS)
+            .launch(learner);
 
     trained
         .model
@@ -208,8 +206,8 @@ pub fn test() {
         .collect();
 
     // shape 맞추기: [1, seq_len, 1]
-    let x = Tensor::<BackendF, 1>::from_floats(test_input.as_slice(), &device)
-        .reshape([1, seq_len, 1]);
+    let x =
+        Tensor::<BackendF, 1>::from_floats(test_input.as_slice(), &device).reshape([1, seq_len, 1]);
 
     // ✅ 3. 추론 실행
     let output = model.forward(x).to_data();

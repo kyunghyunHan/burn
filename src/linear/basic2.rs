@@ -87,9 +87,11 @@ pub fn example() {
         let w = Tensor::<AD, 2>::from_floats(w_matrix, &device).require_grad();
         let b = Tensor::<AD, 1>::from_floats([b_scalar], &device).require_grad();
 
-        let hypothesis = x_train.clone().matmul(w.clone())
-            + b.clone().expand([x_train.dims()[0], 1]);
-        let loss = (hypothesis.clone() - y_train_mat.clone()).powi_scalar(2).mean();
+        let hypothesis =
+            x_train.clone().matmul(w.clone()) + b.clone().expand([x_train.dims()[0], 1]);
+        let loss = (hypothesis.clone() - y_train_mat.clone())
+            .powi_scalar(2)
+            .mean();
 
         let loss_value = loss
             .clone()
@@ -116,9 +118,7 @@ pub fn example() {
 
         println!(
             "Epoch {:2}/20 hypothesis: {:?} Cost: {:.6}",
-            epoch,
-            hypo_vec,
-            loss_value
+            epoch, hypo_vec, loss_value
         );
     }
 

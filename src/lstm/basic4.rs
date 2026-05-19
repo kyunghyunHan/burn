@@ -2,17 +2,17 @@ use burn::backend::autodiff;
 use burn::backend::wgpu::{Wgpu, WgpuDevice};
 use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
 use burn::data::dataset::Dataset;
+use burn::lr_scheduler::constant::ConstantLr;
 use burn::nn::loss::{MseLoss, Reduction};
 use burn::nn::{Linear, LinearConfig};
-use burn::lr_scheduler::constant::ConstantLr;
 use burn::optim::AdamConfig;
 use burn::prelude::*;
 use burn::record::{CompactRecorder, Recorder};
 use burn::tensor::backend::{AutodiffBackend, Backend};
 use burn::tensor::Tensor;
 use burn::train::{
-    metric::LossMetric, InferenceStep, Learner, RegressionOutput, SupervisedTraining, TrainOutput,
-    TrainStep, TrainingStrategy,
+    metric::LossMetric, ExecutionStrategy, InferenceStep, Learner, RegressionOutput,
+    SupervisedTraining, TrainOutput, TrainStep, TrainingStrategy,
 };
 use serde::Deserialize;
 
@@ -281,7 +281,9 @@ pub fn example() {
         .metric_train_numeric(LossMetric::new())
         .metric_valid_numeric(LossMetric::new())
         .with_file_checkpointer(CompactRecorder::new())
-        .with_training_strategy(TrainingStrategy::SingleDevice(device.clone()))
+        .with_training_strategy(TrainingStrategy::Default(ExecutionStrategy::single(
+            device.clone(),
+        )))
         .num_epochs(EPOCHS)
         .launch(learner);
 
@@ -318,7 +320,11 @@ pub fn infer_example() {
     }
 
     let x = Tensor::<B, 3>::from_floats(norm, &device);
-    let out = model.forward(x).to_data().to_vec::<f32>().expect("to_vec 실패");
+    let out = model
+        .forward(x)
+        .to_data()
+        .to_vec::<f32>()
+        .expect("to_vec 실패");
     let pred = denormalize(out[0], stats.y_mean, stats.y_std);
     println!("예측 값: {:.6}", pred);
 }
